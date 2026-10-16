@@ -46,7 +46,7 @@ export const sampleEventSpec = {
 /** Normal person – all fields present, no flags. */
 export const personNormal = {
   id: "HX26-P-001",
-  name: "Aarav Mehta",
+  name: "Preet Patel",
   roleId: "participant",
   org: "SVNIT",
   email: "aarav@example.com",

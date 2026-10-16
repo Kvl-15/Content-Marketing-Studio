@@ -15,14 +15,18 @@
 - Task 2: Stub core API (16 October 2026)
   - Files: `core/render.js`, `core/validate.js`, `core/operations.js`, `core/picker.js`, `core/index.js`, `core/stubs.test.js`.
   - Stubbed `renderCard`, `validate`, `applyOperation`, `pickThree`.
-  - Updated stub background to `#F3F4F6` with `#374151` 0.3mm stroke for visible borders in preview.
-  - 3 stub unit tests passed (43 total tests passing in `npx vitest run`).
+  - 3 stub unit tests passed.
+- Task 3: First real vertical slice of renderCard (16 October 2026)
+  - Files: `core/templateData.js`, `core/render.js`, `core/renderCard.test.js`, `scripts/preview-card.js`.
+  - Implemented template data for portrait skeleton, blocks, theme, and look.bold.
+  - Rendered scene nodes and SVG with role resolution, XML escaping, and logo/photo placeholders.
+  - 6 unit tests passed in `core/renderCard.test.js` (49 total tests passing in `npx vitest run`).
 
 ## In progress
 - (none)
 
 ## Next
-- First real vertical slice of renderCard: one person, one look, placeholder rectangles for logos (Part 18.3).
+- Task 4: text measuring, wrapping and fitting with opentype.js and a bundled Latin font (Section 10.6).
 
 ## Decisions and open questions
 - D-17: layouts are pre-made
