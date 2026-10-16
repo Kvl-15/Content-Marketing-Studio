@@ -1,0 +1,16 @@
+{
+  "name": "@acm-studio/core",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./render.js",
+  "exports": {
+    ".": "./render.js"
+  },
+  "scripts": {
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "zod": "^4.6.7"
+  }
+}
