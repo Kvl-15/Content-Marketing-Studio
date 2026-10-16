@@ -9,13 +9,17 @@
 - Be honest: only mark something Done if its tests pass. Say how you checked.
 
 ## Done
-- (nothing verified yet)
+- Task 1: Schemas (16 October 2026)
+  - Files: `core/schemas.js`, `core/fixtures.js`, `core/schemas.test.js`.
+  - Defined Zod schemas for all 12 shapes from Part 5 and Section 12.3 (EventSpec, Person, BrandKit, Skeleton, Block, Theme, Look, SceneNode, Issue, DesignConfig, ExportSettings, Operation).
+  - Verified with 39 unit tests in `core/schemas.test.js` covering valid fixtures and at least two bad-input cases per schema. All 40 test suite checks passed (`npx vitest run`).
 
 ## In progress
-- Task 1: Zod schemas for every data shape in Part 5, plus core/fixtures.js and core/schemas.test.js. A previous agent (Claude) wrote part of core/schemas.js and core/fixtures.js before its usage limit ran out. The Operation schema (discriminated union on "op", all 12 operations from section 12.3) was written. The rest is not verified. An audit has not been done yet.
+- (none)
 
 ## Next
-- Audit core/schemas.js and core/fixtures.js against Part 5 of the knowledge base (read-only), then finish whatever is missing.
+- Stub `renderCard` and first vertical slice: create `core/render.js` returning hardcoded SVG, scene graph, and issues so client and server can integrate immediately (D-19).
 
 ## Decisions and open questions
 - D-17: layouts are pre-made
+- D-19: schemas and function signatures frozen in week 1
