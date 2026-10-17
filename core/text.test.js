@@ -11,6 +11,9 @@ import {
   sampleBrandKit,
   sampleEventSpec,
 } from "./fixtures.js";
+import { loadContent } from "../scripts/loadContent.js";
+
+const { skeletons, blocks, themes, looks } = loadContent();
 
 // Load test font from assets/fonts
 const fontPath = resolve(process.cwd(), "assets/fonts/Roboto-VariableFont_wdth,wght.ttf");
@@ -187,6 +190,9 @@ describe("core/text engine", () => {
         brand: sampleBrandKit,
         card: sampleEventSpec.card,
         font: testFont,
+        skeleton: skeletons.portrait,
+        blocks,
+        theme: themes["brand-blue"],
       });
 
       const nameNode = res.scene.find((n) => n.id === "name");
@@ -212,6 +218,9 @@ describe("core/text engine", () => {
         brand: sampleBrandKit,
         card: sampleEventSpec.card,
         font: testFont,
+        skeleton: skeletons.portrait,
+        blocks,
+        theme: themes["brand-blue"],
       });
 
       expect(res.svg).toContain("René &amp; François");

@@ -3,7 +3,7 @@
 ## Project
 - ACM NIT Surat design studio: generates print-ready ID cards for club events.
 - Full spec: docs/knowledge-base.md. Use its field names and decisions exactly.
-- I am Person A (the owner of core/). Person B owns server/. Person C owns client/ and content/. Never edit their folders. If something there needs changing, tell me and I will message them.
+- I am Person A (the owner of core/). Person B owns server/. Person C owns client/ and content/. Note (18 October 2026): Person C has been inactive, so Person A is temporarily covering Person C's areas (content/, assets/, and docs/). Keep server/ and client/ strictly off limits.
 - I am a student. Explain things simply.
 
 ## Hard rules

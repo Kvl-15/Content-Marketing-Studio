@@ -1,0 +1,27 @@
+{
+  "id": "acm-nitsurat",
+  "name": "ACM NIT Surat",
+  "logos": {
+    "primary": {
+      "file": "acm-nitsurat.svg",
+      "minWidthMm": 12,
+      "clearSpaceMm": 2
+    },
+    "secondary": {
+      "file": "svnit.svg",
+      "minWidthMm": 12,
+      "clearSpaceMm": 2
+    }
+  },
+  "palette": {
+    "primary": "#0085FF",
+    "secondary": "#FF6B35",
+    "dark": "#111827",
+    "light": "#F9FAFB"
+  },
+  "fonts": {
+    "heading": "Roboto",
+    "body": "Roboto"
+  },
+  "qrDefaultUrl": "https://example.org/checkin/{id}"
+}

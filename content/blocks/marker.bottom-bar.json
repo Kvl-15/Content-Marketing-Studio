@@ -1,0 +1,13 @@
+{
+  "id": "marker.bottom-bar",
+  "slot": "roleMarker",
+  "elements": [
+    {
+      "id": "bar",
+      "type": "rect",
+      "box": [0, 0, 100, 100],
+      "fill": "$role.color",
+      "decor": true
+    }
+  ]
+}

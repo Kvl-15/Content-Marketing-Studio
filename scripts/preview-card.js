@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import opentype from "opentype.js";
 import { renderCard } from "../core/render.js";
 import * as fixtures from "../core/fixtures.js";
+import { loadContent } from "./loadContent.js";
 
 // Discover all exported person fixtures
 const availablePersons = Object.fromEntries(
@@ -30,6 +31,7 @@ const font = opentype.parse(
   fontBuf.buffer.slice(fontBuf.byteOffset, fontBuf.byteOffset + fontBuf.byteLength)
 );
 
+const { skeletons, blocks, themes, looks } = loadContent();
 const person = availablePersons[personName];
 const result = renderCard({
   person,
@@ -37,6 +39,10 @@ const result = renderCard({
   brand: fixtures.sampleBrandKit,
   card: fixtures.sampleEventSpec.card,
   font,
+  skeleton: skeletons.portrait,
+  blocks,
+  theme: themes["brand-blue"],
+  look: looks["look.bold"],
 });
 
 const outFile = `card-${personName}.svg`;

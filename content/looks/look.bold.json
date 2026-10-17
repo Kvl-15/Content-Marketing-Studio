@@ -1,0 +1,30 @@
+{
+  "id": "look.bold",
+  "skeleton": "portrait",
+  "theme": "brand-blue",
+  "blocks": {
+    "header": "header.solid",
+    "photo": "photo.rounded",
+    "info": "info.centered",
+    "roleMarker": "marker.bottom-bar"
+  },
+  "attributes": {
+    "skeleton": "portrait",
+    "header": "solid",
+    "photo": "rounded",
+    "marker": "bottom-bar",
+    "theme": "blue"
+  },
+  "tags": [
+    "bold",
+    "tech",
+    "energetic"
+  ],
+  "requires": {
+    "orientation": [
+      "portrait"
+    ],
+    "maxRoles": 6,
+    "needsPhotoSlot": false
+  }
+}

@@ -55,8 +55,27 @@ function toAbsolute(pct, slot) {
  * @returns {{ svg: string, scene: import("./schemas.js").SceneNode extends import("zod").ZodType<infer T> ? T[] : any[], issues: import("./schemas.js").Issue extends import("zod").ZodType<infer T> ? T[] : any[] }}
  */
 export function renderCard(input) {
-  const skeleton = input.skeleton || defaultSkeleton;
-  const theme = input.theme || defaultTheme;
+  const skeleton = input.skeleton || {
+    id: "portrait",
+    size: { w: 54, h: 85.6 },
+    slots: {
+      header: [0, 0, 54, 26],
+      photo: [13, 22, 28, 34],
+      info: [4, 58, 46, 18],
+      roleMarker: [0, 78, 54, 7.6],
+    },
+  };
+  const theme = input.theme || {
+    colors: {
+      background: "#FFFFFF",
+      text: "#111827",
+      accent: "$brand.palette.primary",
+    },
+    fonts: {
+      heading: "$brand.fonts.heading",
+      body: "$brand.fonts.body",
+    },
+  };
   const brand = input.brand || null;
   const event = input.event || null;
   const person = input.person || { id: "HX26-P-000", name: "Participant", roleId: "participant" };
@@ -100,9 +119,30 @@ export function renderCard(input) {
   const infoSlot = skeleton.slots.info;
   const markerSlot = skeleton.slots.roleMarker;
 
-  const infoBlock = defaultBlocks["info.centered"];
-  const nameElement = infoBlock.elements.find((/** @type {any} */ el) => el.id === "name");
-  const roleElement = infoBlock.elements.find((/** @type {any} */ el) => el.id === "role");
+  const blocks = input.blocks || {};
+  const infoBlock = blocks["info.centered"] || {
+    id: "info.centered",
+    slot: "info",
+    elements: [
+      { id: "name", type: "text", bind: "person.name", font: "heading", box: [5, 10, 90, 50], size: [9, 6.5], oneLineFloor: 7.5, maxLines: 2, align: "center" },
+      { id: "role", type: "text", bind: "role.label", font: "body", box: [5, 65, 90, 30], size: [6, 4], maxLines: 1, align: "center" },
+    ],
+  };
+  const nameElement = infoBlock.elements.find((/** @type {any} */ el) => el.id === "name") || {
+    id: "name",
+    box: [5, 10, 90, 50],
+    size: [9, 6.5],
+    oneLineFloor: 7.5,
+    maxLines: 2,
+    align: "center",
+  };
+  const roleElement = infoBlock.elements.find((/** @type {any} */ el) => el.id === "role") || {
+    id: "role",
+    box: [5, 65, 90, 30],
+    size: [6, 4],
+    maxLines: 1,
+    align: "center",
+  };
 
   const nameBox = toAbsolute(nameElement.box, infoSlot);
   const roleBox = toAbsolute(roleElement.box, infoSlot);

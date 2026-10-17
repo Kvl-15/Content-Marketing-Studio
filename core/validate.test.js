@@ -21,6 +21,9 @@ import {
   validate,
 } from "./validate.js";
 import { renderCard } from "./render.js";
+import { loadContent } from "../scripts/loadContent.js";
+
+const { skeletons, blocks, themes, looks } = loadContent();
 import {
   personLongName,
   personNoPhoto,
@@ -601,6 +604,10 @@ describe("core/validate", () => {
       brand: sampleBrandKit,
       card: sampleEventSpec.card,
       font: testFont,
+      skeleton: skeletons.portrait,
+      blocks,
+      theme: themes["brand-blue"],
+      look: looks["look.bold"],
     };
 
     it("renders normal fixture person with zero errors", () => {

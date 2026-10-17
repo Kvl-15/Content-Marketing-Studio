@@ -8,6 +8,9 @@ import {
   sampleEventSpec,
 } from "./fixtures.js";
 import { Issue, SceneNode } from "./schemas.js";
+import { loadContent } from "../scripts/loadContent.js";
+
+const { skeletons, blocks, themes, looks } = loadContent();
 
 describe("core/renderCard vertical slice", () => {
   const baseInput = {
@@ -15,6 +18,10 @@ describe("core/renderCard vertical slice", () => {
     event: sampleEventSpec,
     brand: sampleBrandKit,
     card: sampleEventSpec.card,
+    skeleton: skeletons.portrait,
+    blocks,
+    theme: themes["brand-blue"],
+    look: looks["look.bold"],
   };
 
   it("svg has the correct mm width, height and viewBox for portrait", () => {

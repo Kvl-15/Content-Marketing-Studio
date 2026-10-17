@@ -41,11 +41,21 @@
   - Wired into `renderCard` with additive `fixes` list; rollback if repairs do not reduce errors or introduce new ones.
   - 116 tests passed across 7 test files (`npx vitest run`).
 
+- Task 7A: Content decoupled into JSON files (18 October 2026)
+  - Files: `content/skeletons/portrait.json`, `content/blocks/*.json`, `content/themes/brand-blue.json`, `content/looks/look.bold.json`, `content/brand-kits/acm-nitsurat/brand.json`, `scripts/loadContent.js`, `core/templateData.js`, `core/content.test.js`, `docs/ADDING_CONTENT.md`, `core/golden/*.svg`.
+  - Moved template definitions from hardcoded JavaScript in `core/templateData.js` into modular JSON files in `content/`.
+  - Implemented schema-validating loader `scripts/loadContent.js`.
+  - Golden SVG tests confirmed byte-identical output for `personNormal` and `personLongName`.
+  - Added `docs/ADDING_CONTENT.md` guide and updated `docs/AGENT_RULES.md` for Person A covering Person C's areas.
+  - 124 tests passed across 8 test files (`npx vitest run`).
+
 ## In progress
 - Physical print test: print `card.svg` on a real printer to verify physical dimensions, margin, and logo sizes (from Task 3).
 
 ## Next
-- Task 7: Picker and stress-set harness (Part 12 of knowledge base).
+- Task 7B: Renderer support for new block shapes (header, photo, role marker variants).
+- Task 7C: Author 5 or more looks to build the design library.
+- Task 8: Design picker and stress-set harness.
 - Note: Compact density repair in autofix is currently a stub until renderer supports density.
 - Note: Until a look marks something optional, repair (b) in autofix does nothing.
 - Note: `PHOTO_LOW_RES` deferred to preflight.
