@@ -211,6 +211,7 @@ export const RectBlockElement = z.object({
   fill:   z.string(),
   radius: z.number().min(0).optional(),
   decor:  z.boolean().optional(),
+  optional: z.boolean().optional(),
 });
 
 /** Image element inside a block (logos, photos). */
@@ -222,6 +223,7 @@ export const ImageBlockElement = z.object({
   fit:    z.enum(["contain", "cover"]).optional(),
   anchor: z.enum(["left", "right", "center"]).optional(),
   decor:  z.boolean().optional(),
+  optional: z.boolean().optional(),
 });
 
 /**
@@ -240,6 +242,7 @@ export const TextBlockElement = z.object({
   maxLines:     z.number().int().positive(),
   align:        z.enum(["left", "center", "right"]),
   decor:        z.boolean().optional(),
+  optional:     z.boolean().optional(),
 }).refine(
   (data) => {
     if (data.oneLineFloor === undefined) return true;
@@ -329,6 +332,7 @@ export const RectNode = z.object({
   fill:   z.string(),
   radius: z.number().min(0).optional(),
   decor:  z.boolean().optional(),
+  optional: z.boolean().optional(),
 });
 
 /** Rendered image (logo, photo) in the scene graph. */
@@ -341,6 +345,7 @@ export const ImageNode = z.object({
   srcH:  z.number().positive(),
   clip:  z.enum(["circle", "rounded"]).optional(),
   decor: z.boolean().optional(),
+  optional: z.boolean().optional(),
 });
 
 /** Rendered text in the scene graph. */
@@ -355,6 +360,8 @@ export const TextNode = z.object({
   anchor: z.enum(["start", "middle", "end"]),
   status: z.enum(["ok", "truncated"]),
   decor:  z.boolean().optional(),
+  optional: z.boolean().optional(),
+  bind:   z.string().optional(),
 });
 
 /** Rendered path (QR code, text outlines) in the scene graph. */
@@ -365,6 +372,7 @@ export const PathNode = z.object({
   d:     z.string(),
   fill:  z.string(),
   decor: z.boolean().optional(),
+  optional: z.boolean().optional(),
 });
 
 /** Any node in the scene graph (discriminated on "type"). */

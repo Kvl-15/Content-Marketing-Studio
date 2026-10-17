@@ -1,4 +1,5 @@
 // @ts-check
+import { autofix } from "./autofix.js";
 import {
   defaultBlocks,
   defaultLook,
@@ -149,7 +150,7 @@ export function renderCard(input) {
 
   // 6. Assemble scene graph
   /** @type {any[]} */
-  const scene = [
+  let scene = [
     {
       type: "rect",
       id: "bg",
@@ -193,6 +194,7 @@ export function renderCard(input) {
       fill: textColor,
       anchor: "middle",
       status: nameFit.status,
+      bind: "person.name",
     },
     {
       type: "text",
@@ -204,6 +206,7 @@ export function renderCard(input) {
       fill: textColor,
       anchor: "middle",
       status: roleFit.status,
+      bind: "role.label",
     },
     {
       type: "rect",
@@ -214,7 +217,30 @@ export function renderCard(input) {
     },
   ];
 
-  // 7. Emit SVG strictly from the scene nodes
+  // 7. Validate scene with context (D-21)
+  const context = {
+    card: input.card,
+    brand: input.brand,
+    font: fontObj,
+    person: input.person,
+    event: input.event,
+    theme,
+  };
+  let issues = validate(scene, context);
+
+  // 8. Autofix recoverable defects (Part 10 & 11.3, D-23)
+  const autofixResult = autofix({
+    ...input,
+    scene,
+    issues,
+    font: fontObj,
+    theme,
+  });
+  scene = autofixResult.scene;
+  issues = autofixResult.issues;
+  const fixes = autofixResult.fixes || [];
+
+  // 9. Emit SVG strictly from the final (repaired) scene nodes
   const svgElements = scene.map((node) => {
     if (node.type === "rect") {
       const radiusAttr = node.radius ? ` rx="${node.radius}" ry="${node.radius}"` : "";
@@ -249,16 +275,5 @@ export function renderCard(input) {
 
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${widthMm}mm" height="${heightMm}mm" viewBox="0 0 ${widthMm} ${heightMm}">${svgElements.join("")}</svg>`;
 
-  // 8. Validate scene with context (D-21)
-  const context = {
-    card: input.card,
-    brand: input.brand,
-    font: fontObj,
-    person: input.person,
-    event: input.event,
-    theme,
-  };
-  const issues = validate(scene, context);
-
-  return { svg, scene, issues };
+  return { svg, scene, issues, fixes };
 }

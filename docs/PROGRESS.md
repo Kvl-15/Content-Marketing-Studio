@@ -35,11 +35,19 @@
   - Added WCAG 2.1 contrast calculation (4.5:1 / 3:1 for large text), safe margin verification, placeholder checks, font re-measuring for overflow, and logo/QR validation.
   - 103 tests passed across 6 test files (`npx vitest run`).
 
+- Task 6: Autofix (18 October 2026)
+  - Files: `core/autofix.js`, `core/autofix.test.js`, `core/render.js`, `core/schemas.js`, `core/index.js`.
+  - Implemented pure bounded autofix pipeline in Part 11 order: (a) text size reduction within D-22 floor, (b) hiding optional elements (`optional: true`), (c) text color contrast fix (`#FFFFFF`/`#111827`), (d) compact density stub.
+  - Wired into `renderCard` with additive `fixes` list; rollback if repairs do not reduce errors or introduce new ones.
+  - 116 tests passed across 7 test files (`npx vitest run`).
+
 ## In progress
 - Physical print test: print `card.svg` on a real printer to verify physical dimensions, margin, and logo sizes (from Task 3).
 
 ## Next
-- Task 6: Autofix (Part 11 of knowledge base; note: autofix must never shrink name text below its minimum, 6.5 pt).
+- Task 7: Picker and stress-set harness (Part 12 of knowledge base).
+- Note: Compact density repair in autofix is currently a stub until renderer supports density.
+- Note: Until a look marks something optional, repair (b) in autofix does nothing.
 - Note: `PHOTO_LOW_RES` deferred to preflight.
 - Note: `LOGO_MISSING` currently counts placeholder nodes as present; this will change when real logos arrive.
 - (Note: Outlining text to vector paths with `opentype.js` is deferred to a later task).
@@ -55,8 +63,15 @@
 - D-21: Validator context and decor flag (17 October 2026):
   1. `validate(scene, context = {})` accepts an optional second argument `{ card, brand, font, person, event, theme }` so that calling `validate(scene)` with 1 argument works without crashing.
   2. Added optional `decor: boolean` flag to block elements and scene nodes to separate content from decorative elements (`OVERLAP` ignores decor elements). Person B and Person C must be informed.
-- Published Core Function Signatures (16 October 2026):
-  - `renderCard(input)` -> `{ svg, scene, issues }`
+- D-22: Autofix text size limits (18 October 2026):
+  1. Name text (`bind === "person.name"`) is never lowered below its own declared minimum (6.5 pt).
+  2. For other text: if declared minimum is <= 5 pt, floor is declared minimum (autofix never raises a limit). Otherwise floor = max(5 pt, declaredMin - 1 pt).
+- D-23: Optional element flag and additive fixes (18 October 2026):
+  1. Added optional additive boolean flag `optional` to block elements and `SceneNode` in `schemas.js` (Person B and Person C must be informed).
+  2. `renderCard` additively returns `{ svg, scene, issues, fixes }` without breaking existing `{ svg, scene, issues }` consumers.
+- Published Core Function Signatures (18 October 2026):
+  - `renderCard(input)` -> `{ svg, scene, issues, fixes }`
+  - `autofix({ ...input, scene, issues })` -> `{ scene, issues, fixes }`
   - `validate(scene, context?)` -> `issues`
   - `applyOperation(design, op)` -> `design`
   - `pickThree(eligible, hints = [], excludedGroups = [])` -> `looks`

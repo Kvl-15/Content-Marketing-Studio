@@ -7,6 +7,7 @@
 export * from "./schemas.js";
 export { renderCard } from "./render.js";
 export { validate, LINE_HEIGHT } from "./validate.js";
+export { autofix } from "./autofix.js";
 export { applyOperation } from "./operations.js";
 export { pickThree } from "./picker.js";
 export { measure, wrap, fitText, PT_TO_MM } from "./text.js";
