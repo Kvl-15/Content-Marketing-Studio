@@ -88,7 +88,7 @@ describe("core/renderCard vertical slice", () => {
       person: mentorPerson,
     });
 
-    expect(participantRes.svg).toContain("Aarav Mehta");
+    expect(participantRes.svg).toContain(personNormal.name);
     expect(mentorRes.svg).toContain("Mentor Vikram");
 
     // Colors differ based on role

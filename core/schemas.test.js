@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import {
   Block,
+  BlockElement,
   BrandKit,
   DesignConfig,
   EventSpec,
@@ -153,6 +154,65 @@ describe("core/schemas", () => {
       };
       expect(() => Block.parse(invalid)).toThrow();
     });
+
+    it("validates TextBlockElement with and without oneLineFloor", () => {
+      const validWithout = {
+        id: "name",
+        type: "text",
+        box: [0, 0, 100, 100],
+        bind: "person.name",
+        font: "heading",
+        size: [9, 5],
+        maxLines: 2,
+        align: "center",
+      };
+      expect(() => BlockElement.parse(validWithout)).not.toThrow();
+
+      const validWith = {
+        ...validWithout,
+        oneLineFloor: 7.5,
+      };
+      expect(() => BlockElement.parse(validWith)).not.toThrow();
+
+      // Rejected if above start size (9)
+      const invalidAbove = {
+        ...validWithout,
+        oneLineFloor: 10,
+      };
+      expect(() => BlockElement.parse(invalidAbove)).toThrow();
+
+      // Rejected if below minimum size (5)
+      const invalidBelow = {
+        ...validWithout,
+        oneLineFloor: 4,
+      };
+      expect(() => BlockElement.parse(invalidBelow)).toThrow();
+    });
+
+    it("accepts optional decor flag on BlockElement", () => {
+      const rectWithDecor = {
+        id: "band",
+        type: "rect",
+        box: [0, 0, 100, 100],
+        fill: "#000000",
+        decor: true,
+      };
+      expect(() => BlockElement.parse(rectWithDecor)).not.toThrow();
+
+      const rectWithoutDecor = {
+        id: "band",
+        type: "rect",
+        box: [0, 0, 100, 100],
+        fill: "#000000",
+      };
+      expect(() => BlockElement.parse(rectWithoutDecor)).not.toThrow();
+
+      const invalidDecor = {
+        ...rectWithDecor,
+        decor: "yes",
+      };
+      expect(() => BlockElement.parse(invalidDecor)).toThrow();
+    });
   });
 
   // 6. Theme
@@ -218,6 +278,25 @@ describe("core/schemas", () => {
         status: "overflowing",
       };
       expect(() => SceneNode.parse(invalid)).toThrow();
+    });
+
+    it("accepts optional decor flag on SceneNode", () => {
+      const nodeWithDecor = {
+        ...sampleSceneNodes.rect,
+        decor: true,
+      };
+      expect(() => SceneNode.parse(nodeWithDecor)).not.toThrow();
+
+      const nodeWithoutDecor = {
+        ...sampleSceneNodes.rect,
+      };
+      expect(() => SceneNode.parse(nodeWithoutDecor)).not.toThrow();
+
+      const invalidDecor = {
+        ...sampleSceneNodes.rect,
+        decor: 123,
+      };
+      expect(() => SceneNode.parse(invalidDecor)).toThrow();
     });
   });
 

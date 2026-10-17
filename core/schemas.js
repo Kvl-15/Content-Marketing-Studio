@@ -210,6 +210,7 @@ export const RectBlockElement = z.object({
   box:    BoxTuple,
   fill:   z.string(),
   radius: z.number().min(0).optional(),
+  decor:  z.boolean().optional(),
 });
 
 /** Image element inside a block (logos, photos). */
@@ -220,6 +221,7 @@ export const ImageBlockElement = z.object({
   src:    z.string(),
   fit:    z.enum(["contain", "cover"]).optional(),
   anchor: z.enum(["left", "right", "center"]).optional(),
+  decor:  z.boolean().optional(),
 });
 
 /**
@@ -228,15 +230,25 @@ export const ImageBlockElement = z.object({
  * The renderer converts to mm: 1 pt = 0.3528 mm.
  */
 export const TextBlockElement = z.object({
-  id:       z.string().min(1),
-  type:     z.literal("text"),
-  box:      BoxTuple,
-  bind:     z.string(),
-  font:     z.string(),
-  size:     z.tuple([z.number().positive(), z.number().positive()]),
-  maxLines: z.number().int().positive(),
-  align:    z.enum(["left", "center", "right"]),
-});
+  id:           z.string().min(1),
+  type:         z.literal("text"),
+  box:          BoxTuple,
+  bind:         z.string(),
+  font:         z.string(),
+  size:         z.tuple([z.number().positive(), z.number().positive()]),
+  oneLineFloor: z.number().positive().optional(),
+  maxLines:     z.number().int().positive(),
+  align:        z.enum(["left", "center", "right"]),
+  decor:        z.boolean().optional(),
+}).refine(
+  (data) => {
+    if (data.oneLineFloor === undefined) return true;
+    return data.oneLineFloor <= data.size[0] && data.oneLineFloor >= data.size[1];
+  },
+  {
+    message: "oneLineFloor must be between start size and minimum size",
+  }
+);
 
 /** Any element inside a block (discriminated on "type"). */
 export const BlockElement = z.discriminatedUnion("type", [
@@ -316,17 +328,19 @@ export const RectNode = z.object({
   box:    Box,
   fill:   z.string(),
   radius: z.number().min(0).optional(),
+  decor:  z.boolean().optional(),
 });
 
 /** Rendered image (logo, photo) in the scene graph. */
 export const ImageNode = z.object({
-  type: z.literal("image"),
-  id:   z.string(),
-  box:  Box,
-  href: z.string(),
-  srcW: z.number().positive(),
-  srcH: z.number().positive(),
-  clip: z.enum(["circle", "rounded"]).optional(),
+  type:  z.literal("image"),
+  id:    z.string(),
+  box:   Box,
+  href:  z.string(),
+  srcW:  z.number().positive(),
+  srcH:  z.number().positive(),
+  clip:  z.enum(["circle", "rounded"]).optional(),
+  decor: z.boolean().optional(),
 });
 
 /** Rendered text in the scene graph. */
@@ -340,15 +354,17 @@ export const TextNode = z.object({
   fill:   z.string(),
   anchor: z.enum(["start", "middle", "end"]),
   status: z.enum(["ok", "truncated"]),
+  decor:  z.boolean().optional(),
 });
 
 /** Rendered path (QR code, text outlines) in the scene graph. */
 export const PathNode = z.object({
-  type: z.literal("path"),
-  id:   z.string(),
-  box:  Box,
-  d:    z.string(),
-  fill: z.string(),
+  type:  z.literal("path"),
+  id:    z.string(),
+  box:   Box,
+  d:     z.string(),
+  fill:  z.string(),
+  decor: z.boolean().optional(),
 });
 
 /** Any node in the scene graph (discriminated on "type"). */

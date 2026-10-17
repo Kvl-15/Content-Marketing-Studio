@@ -5,6 +5,8 @@ import {
   defaultSkeleton,
   defaultTheme,
 } from "./templateData.js";
+import { fitText, PT_TO_MM } from "./text.js";
+import { LINE_HEIGHT, validate } from "./validate.js";
 
 /**
  * @module core/render
@@ -47,7 +49,6 @@ function toAbsolute(pct, slot) {
 
 /**
  * Renders an ID card into an SVG, scene graph, and issue list.
- * First real vertical slice: renders look.bold deterministically.
  *
  * @param {Record<string, any>} input
  * @returns {{ svg: string, scene: import("./schemas.js").SceneNode extends import("zod").ZodType<infer T> ? T[] : any[], issues: import("./schemas.js").Issue extends import("zod").ZodType<infer T> ? T[] : any[] }}
@@ -69,7 +70,7 @@ export function renderCard(input) {
   const roleLabel = roleMatch?.label || person.roleId?.toUpperCase() || "PARTICIPANT";
   const roleColor = roleMatch?.color?.value || "#2563EB";
 
-  // 2. Resolve theme colors and fonts
+  // 2. Resolve theme colors
   const bgColor = theme.colors.background === "$brand.palette.light"
     ? (brand?.palette?.light || "#FFFFFF")
     : (theme.colors.background || "#FFFFFF");
@@ -78,55 +79,103 @@ export function renderCard(input) {
     ? (brand?.palette?.dark || "#111827")
     : (theme.colors.text || "#111827");
 
-  const headingFont = theme.fonts.heading.startsWith("$brand.fonts.")
-    ? (brand?.fonts?.heading || "sans-serif")
-    : (theme.fonts.heading || "sans-serif");
+  // 3. Resolve fonts
+  const fontObj = input.font || input.fonts?.heading || (input.fonts && Object.values(input.fonts)[0]);
+  const bodyFontObj = input.fonts?.body || fontObj;
 
-  const bodyFont = theme.fonts.body.startsWith("$brand.fonts.")
-    ? (brand?.fonts?.body || "sans-serif")
-    : (theme.fonts.body || "sans-serif");
+  const headingFontFamily = fontObj?.names?.fontFamily?.en
+    || (theme.fonts.heading.startsWith("$brand.fonts.")
+      ? (brand?.fonts?.heading || "sans-serif")
+      : (theme.fonts.heading || "sans-serif"));
 
-  // 3. Assemble scene nodes (Boxes in mm)
+  const bodyFontFamily = bodyFontObj?.names?.fontFamily?.en
+    || (theme.fonts.body.startsWith("$brand.fonts.")
+      ? (brand?.fonts?.body || "sans-serif")
+      : (theme.fonts.body || "sans-serif"));
+
+  // 4. Slots in mm
   const headerSlot = skeleton.slots.header;
   const photoSlot = skeleton.slots.photo;
   const infoSlot = skeleton.slots.info;
   const markerSlot = skeleton.slots.roleMarker;
 
-  // Convert typographic point sizes to mm (1 pt = 0.3528 mm)
-  const nameSizeMm = 9 * 0.3528;
-  const roleSizeMm = 6 * 0.3528;
+  const infoBlock = defaultBlocks["info.centered"];
+  const nameElement = infoBlock.elements.find((/** @type {any} */ el) => el.id === "name");
+  const roleElement = infoBlock.elements.find((/** @type {any} */ el) => el.id === "role");
 
+  const nameBox = toAbsolute(nameElement.box, infoSlot);
+  const roleBox = toAbsolute(roleElement.box, infoSlot);
+
+  // 5. Fit text using opentype font (if provided) following D-20
+  /** @type {{ lines: string[], sizeMm: number, status: "ok" | "truncated" }} */
+  let nameFit;
+  if (fontObj) {
+    nameFit = fitText({
+      text: person.name || "",
+      boxWidthMm: nameBox.w,
+      boxHeightMm: nameBox.h,
+      sizeRangePt: nameElement.size, // [9, 6.5]
+      oneLineFloorPt: nameElement.oneLineFloor, // 7.5
+      maxLines: nameElement.maxLines || 2,
+      font: fontObj,
+    });
+  } else {
+    nameFit = {
+      lines: [person.name || ""],
+      sizeMm: nameElement.size[0] * PT_TO_MM,
+      status: "ok",
+    };
+  }
+
+  /** @type {{ lines: string[], sizeMm: number, status: "ok" | "truncated" }} */
+  let roleFit;
+  if (bodyFontObj) {
+    roleFit = fitText({
+      text: roleLabel,
+      boxWidthMm: roleBox.w,
+      boxHeightMm: roleBox.h,
+      sizeRangePt: roleElement.size, // [6, 4]
+      oneLineFloorPt: roleElement.oneLineFloor,
+      maxLines: roleElement.maxLines || 1,
+      font: bodyFontObj,
+    });
+  } else {
+    roleFit = {
+      lines: [roleLabel],
+      sizeMm: roleElement.size[0] * PT_TO_MM,
+      status: "ok",
+    };
+  }
+
+  // 6. Assemble scene graph
   /** @type {any[]} */
   const scene = [
-    // Card background
     {
       type: "rect",
       id: "bg",
       box: { x: 0, y: 0, w: widthMm, h: heightMm },
       fill: bgColor,
+      decor: true,
     },
-    // Header band (colored by role)
     {
       type: "rect",
       id: "band",
       box: toAbsolute([0, 0, 100, 100], headerSlot),
       fill: roleColor,
+      decor: true,
     },
-    // Primary logo placeholder
     {
       type: "rect",
       id: "logo1",
       box: toAbsolute([6, 15, 38, 70], headerSlot),
       fill: "#D1D5DB",
     },
-    // Secondary logo placeholder
     {
       type: "rect",
       id: "logo2",
       box: toAbsolute([56, 15, 38, 70], headerSlot),
       fill: "#D1D5DB",
     },
-    // Photo placeholder (rounded rect)
     {
       type: "rect",
       id: "photo",
@@ -134,40 +183,38 @@ export function renderCard(input) {
       fill: "#E5E7EB",
       radius: 4,
     },
-    // Person name text
     {
       type: "text",
       id: "name",
-      box: toAbsolute([0, 10, 100, 50], infoSlot),
-      lines: [person.name || ""],
-      sizeMm: nameSizeMm,
-      font: headingFont,
+      box: nameBox,
+      lines: nameFit.lines,
+      sizeMm: nameFit.sizeMm,
+      font: headingFontFamily,
       fill: textColor,
       anchor: "middle",
-      status: "ok",
+      status: nameFit.status,
     },
-    // Role label text
     {
       type: "text",
       id: "role",
-      box: toAbsolute([0, 65, 100, 30], infoSlot),
-      lines: [roleLabel],
-      sizeMm: roleSizeMm,
-      font: bodyFont,
+      box: roleBox,
+      lines: roleFit.lines,
+      sizeMm: roleFit.sizeMm,
+      font: bodyFontFamily,
       fill: textColor,
       anchor: "middle",
-      status: "ok",
+      status: roleFit.status,
     },
-    // Bottom marker bar (colored by role)
     {
       type: "rect",
       id: "bar",
       box: toAbsolute([0, 0, 100, 100], markerSlot),
       fill: roleColor,
+      decor: true,
     },
   ];
 
-  // 4. Emit SVG strictly from the scene nodes
+  // 7. Emit SVG strictly from the scene nodes
   const svgElements = scene.map((node) => {
     if (node.type === "rect") {
       const radiusAttr = node.radius ? ` rx="${node.radius}" ry="${node.radius}"` : "";
@@ -180,17 +227,38 @@ export function renderCard(input) {
       } else if (node.anchor === "end") {
         x = node.box.x + node.box.w;
       }
-      const y = node.box.y + node.sizeMm * 0.85;
-      const textContent = escapeXml(node.lines[0] || "");
-      return `<text id="${node.id}" x="${x}" y="${y}" fill="${node.fill}" font-family="${escapeXml(node.font)}" font-size="${node.sizeMm}" text-anchor="${node.anchor}">${textContent}</text>`;
+
+      if (node.lines.length === 1) {
+        const y = node.box.y + (node.box.h - node.sizeMm) / 2 + node.sizeMm * 0.85;
+        return `<text id="${node.id}" x="${x}" y="${y}" fill="${node.fill}" font-family="${escapeXml(node.font)}" font-size="${node.sizeMm}" text-anchor="${node.anchor}">${escapeXml(node.lines[0])}</text>`;
+      }
+
+      const lineHeightMm = node.sizeMm * LINE_HEIGHT;
+      const totalHeight = (node.lines.length - 1) * lineHeightMm + node.sizeMm;
+      const startY = node.box.y + (node.box.h - totalHeight) / 2 + node.sizeMm * 0.85;
+      const tspans = node.lines
+        .map((line, idx) => {
+          const dy = idx === 0 ? 0 : lineHeightMm;
+          return `<tspan x="${x}" dy="${dy}">${escapeXml(line)}</tspan>`;
+        })
+        .join("");
+      return `<text id="${node.id}" x="${x}" y="${startY}" fill="${node.fill}" font-family="${escapeXml(node.font)}" font-size="${node.sizeMm}" text-anchor="${node.anchor}">${tspans}</text>`;
     }
     return "";
   });
 
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${widthMm}mm" height="${heightMm}mm" viewBox="0 0 ${widthMm} ${heightMm}">${svgElements.join("")}</svg>`;
 
-  /** @type {any[]} */
-  const issues = [];
+  // 8. Validate scene with context (D-21)
+  const context = {
+    card: input.card,
+    brand: input.brand,
+    font: fontObj,
+    person: input.person,
+    event: input.event,
+    theme,
+  };
+  const issues = validate(scene, context);
 
   return { svg, scene, issues };
 }

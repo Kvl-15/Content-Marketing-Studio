@@ -28,7 +28,7 @@ export const defaultBlocks = {
     id: "header.solid",
     slot: "header",
     elements: [
-      { id: "band", type: "rect", box: [0, 0, 100, 100], fill: "$role.color" },
+      { id: "band", type: "rect", box: [0, 0, 100, 100], fill: "$role.color", decor: true },
       { id: "logo1", type: "image", src: "$brand.logo.primary", box: [6, 15, 38, 70], fit: "contain", anchor: "left" },
       { id: "logo2", type: "image", src: "$brand.logo.secondary", box: [56, 15, 38, 70], fit: "contain", anchor: "right" },
     ],
@@ -44,15 +44,15 @@ export const defaultBlocks = {
     id: "info.centered",
     slot: "info",
     elements: [
-      { id: "name", type: "text", bind: "person.name", font: "heading", box: [0, 10, 100, 50], size: [9, 5], maxLines: 2, align: "center" },
-      { id: "role", type: "text", bind: "role.label", font: "body", box: [0, 65, 100, 30], size: [6, 4], maxLines: 1, align: "center" },
+      { id: "name", type: "text", bind: "person.name", font: "heading", box: [5, 10, 90, 50], size: [9, 6.5], oneLineFloor: 7.5, maxLines: 2, align: "center" },
+      { id: "role", type: "text", bind: "role.label", font: "body", box: [5, 65, 90, 30], size: [6, 4], maxLines: 1, align: "center" },
     ],
   },
   "marker.bottom-bar": {
     id: "marker.bottom-bar",
     slot: "roleMarker",
     elements: [
-      { id: "bar", type: "rect", box: [0, 0, 100, 100], fill: "$role.color" },
+      { id: "bar", type: "rect", box: [0, 0, 100, 100], fill: "$role.color", decor: true },
     ],
   },
 };
