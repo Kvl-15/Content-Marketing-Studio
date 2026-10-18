@@ -1,0 +1,29 @@
+{
+  "id": "header.sidebar-brand",
+  "slot": "header",
+  "elements": [
+    {
+      "id": "band",
+      "type": "rect",
+      "box": [0, 0, 100, 100],
+      "fill": "$theme.colors.accent",
+      "decor": true
+    },
+    {
+      "id": "logo1",
+      "type": "image",
+      "src": "$brand.logo.primary",
+      "box": [16.67, 8, 66.67, 16],
+      "fit": "contain",
+      "anchor": "center"
+    },
+    {
+      "id": "logo2",
+      "type": "image",
+      "src": "$brand.logo.secondary",
+      "box": [16.67, 72, 66.67, 16],
+      "fit": "contain",
+      "anchor": "center"
+    }
+  ]
+}

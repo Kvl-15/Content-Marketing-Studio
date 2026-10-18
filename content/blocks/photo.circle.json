@@ -1,0 +1,14 @@
+{
+  "id": "photo.circle",
+  "slot": "photo",
+  "elements": [
+    {
+      "id": "photo",
+      "type": "image",
+      "src": "$person.photo",
+      "box": [0, 0, 100, 100],
+      "fit": "cover",
+      "clip": "circle"
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "id": "look.tech",
+  "skeleton": "sidebar",
+  "theme": "dark",
+  "blocks": {
+    "header": "header.sidebar-brand",
+    "photo": "photo.rounded",
+    "info": "info.sidebar-aligned",
+    "roleMarker": "marker.corner-ribbon"
+  },
+  "attributes": {
+    "skeleton": "sidebar",
+    "header": "diagonal",
+    "photo": "rounded",
+    "marker": "corner-ribbon",
+    "theme": "dark",
+    "mode": "dark",
+    "strategy": "event-led",
+    "typography": "mono"
+  },
+  "tags": [
+    "tech",
+    "cyber",
+    "dark"
+  ],
+  "requires": {
+    "orientation": [
+      "portrait"
+    ],
+    "maxRoles": 6,
+    "needsPhotoSlot": false
+  }
+}

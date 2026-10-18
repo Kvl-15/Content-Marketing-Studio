@@ -1,0 +1,27 @@
+{
+  "id": "info.sidebar-aligned",
+  "slot": "info",
+  "elements": [
+    {
+      "id": "name",
+      "type": "text",
+      "bind": "person.name",
+      "font": "heading",
+      "box": [5, 5, 90, 55],
+      "size": [8.5, 6.5],
+      "oneLineFloor": 7.5,
+      "maxLines": 2,
+      "align": "left"
+    },
+    {
+      "id": "role",
+      "type": "text",
+      "bind": "role.label",
+      "font": "body",
+      "box": [5, 65, 90, 30],
+      "size": [6, 4],
+      "maxLines": 1,
+      "align": "left"
+    }
+  ]
+}

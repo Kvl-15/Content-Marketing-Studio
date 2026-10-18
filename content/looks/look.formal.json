@@ -1,0 +1,33 @@
+{
+  "id": "look.formal",
+  "skeleton": "portrait",
+  "theme": "light",
+  "blocks": {
+    "header": "header.none",
+    "photo": "photo.square",
+    "info": "info.centered",
+    "roleMarker": "marker.side-stripe"
+  },
+  "attributes": {
+    "skeleton": "portrait",
+    "header": "none",
+    "photo": "square",
+    "marker": "side-stripe",
+    "theme": "light",
+    "mode": "light",
+    "strategy": "event-led",
+    "typography": "serif"
+  },
+  "tags": [
+    "formal",
+    "academic",
+    "elegant"
+  ],
+  "requires": {
+    "orientation": [
+      "portrait"
+    ],
+    "maxRoles": 6,
+    "needsPhotoSlot": false
+  }
+}

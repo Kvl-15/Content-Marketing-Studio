@@ -1,0 +1,27 @@
+{
+  "id": "test-logos",
+  "name": "ACM & SVNIT (Test)",
+  "logos": {
+    "primary": {
+      "file": "assets/test-logos/logo-1.jpg",
+      "minWidthMm": 6,
+      "clearSpaceMm": 0
+    },
+    "secondary": {
+      "file": "assets/test-logos/logo-2.jpg",
+      "minWidthMm": 6,
+      "clearSpaceMm": 0
+    }
+  },
+  "palette": {
+    "primary": "#0085FF",
+    "secondary": "#FF6B35",
+    "dark": "#111827",
+    "light": "#F9FAFB"
+  },
+  "fonts": {
+    "heading": "Roboto",
+    "body": "Roboto"
+  },
+  "qrDefaultUrl": "https://example.org/checkin/{id}"
+}

@@ -1,0 +1,33 @@
+{
+  "id": "look.minimal",
+  "skeleton": "portrait",
+  "theme": "light",
+  "blocks": {
+    "header": "header.thin-line",
+    "photo": "photo.circle",
+    "info": "info.left-aligned",
+    "roleMarker": "marker.side-stripe"
+  },
+  "attributes": {
+    "skeleton": "portrait",
+    "header": "thin-line",
+    "photo": "circle",
+    "marker": "side-stripe",
+    "theme": "light",
+    "mode": "light",
+    "strategy": "event-led",
+    "typography": "grotesk"
+  },
+  "tags": [
+    "minimal",
+    "clean",
+    "spacious"
+  ],
+  "requires": {
+    "orientation": [
+      "portrait"
+    ],
+    "maxRoles": 6,
+    "needsPhotoSlot": false
+  }
+}

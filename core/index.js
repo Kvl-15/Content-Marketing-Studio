@@ -11,3 +11,4 @@ export { autofix } from "./autofix.js";
 export { applyOperation } from "./operations.js";
 export { pickThree } from "./picker.js";
 export { measure, wrap, fitText, PT_TO_MM } from "./text.js";
+export { deriveTheme, isPaletteCompatible, ensureContrast, DEFAULT_PALETTE } from "./themeDerivation.js";

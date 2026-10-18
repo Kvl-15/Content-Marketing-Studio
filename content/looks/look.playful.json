@@ -1,0 +1,33 @@
+{
+  "id": "look.playful",
+  "skeleton": "full-photo",
+  "theme": "bright",
+  "blocks": {
+    "header": "header.diagonal",
+    "photo": "photo.circle",
+    "info": "info.centered",
+    "roleMarker": "marker.corner-ribbon"
+  },
+  "attributes": {
+    "skeleton": "full-photo",
+    "header": "diagonal",
+    "photo": "circle",
+    "marker": "corner-ribbon",
+    "theme": "bright",
+    "mode": "colour-field",
+    "strategy": "role-led",
+    "typography": "sans"
+  },
+  "tags": [
+    "playful",
+    "vibrant",
+    "creative"
+  ],
+  "requires": {
+    "orientation": [
+      "portrait"
+    ],
+    "maxRoles": 3,
+    "needsPhotoSlot": false
+  }
+}

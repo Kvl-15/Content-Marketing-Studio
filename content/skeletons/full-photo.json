@@ -1,0 +1,18 @@
+{
+  "id": "full-photo",
+  "size": {
+    "w": 54,
+    "h": 85.6
+  },
+  "slots": {
+    "header": [0, 0, 54, 16],
+    "photo": [11, 18, 32, 32],
+    "info": [4, 52, 46, 22],
+    "roleMarker": [36, 0, 18, 18]
+  },
+  "supports": {
+    "orientation": ["portrait"],
+    "photo": true,
+    "qr": true
+  }
+}

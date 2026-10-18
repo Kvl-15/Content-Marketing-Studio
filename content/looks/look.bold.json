@@ -13,7 +13,10 @@
     "header": "solid",
     "photo": "rounded",
     "marker": "bottom-bar",
-    "theme": "blue"
+    "theme": "blue",
+    "mode": "colour-field",
+    "strategy": "role-led",
+    "typography": "sans"
   },
   "tags": [
     "bold",

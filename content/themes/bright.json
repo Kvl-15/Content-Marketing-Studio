@@ -1,0 +1,12 @@
+{
+  "id": "bright",
+  "colors": {
+    "background": "#FEF3C7",
+    "text": "#1E293B",
+    "accent": "$brand.palette.primary"
+  },
+  "fonts": {
+    "heading": "$brand.fonts.heading",
+    "body": "$brand.fonts.body"
+  }
+}

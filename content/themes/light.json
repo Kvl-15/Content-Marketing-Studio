@@ -1,0 +1,12 @@
+{
+  "id": "light",
+  "colors": {
+    "background": "#FFFFFF",
+    "text": "#111827",
+    "accent": "$brand.palette.primary"
+  },
+  "fonts": {
+    "heading": "$brand.fonts.heading",
+    "body": "$brand.fonts.body"
+  }
+}

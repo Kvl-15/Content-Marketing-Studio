@@ -109,6 +109,7 @@ export const EventSpec = z.object({
     tagline: provenanceField(z.string()),
     venue:   provenanceField(z.string()),
     dates:   provenanceField(z.array(z.string())),
+    palette: z.array(HexColor).min(1).max(3).optional(),
   }),
   roles:  z.array(RoleSpec).min(1),
   fields: provenanceField(z.array(z.string())),
@@ -151,6 +152,9 @@ export const LogoSpec = z.object({
   file:          z.string().min(1),
   minWidthMm:    z.number().positive(),
   clearSpaceMm:  z.number().min(0),
+  dataUri:       z.string().optional(),
+  width:         z.number().positive().optional(),
+  height:        z.number().positive().optional(),
 });
 
 /**
@@ -306,11 +310,14 @@ export const Look = z.object({
   theme:    z.string().min(1),
   blocks:   z.record(z.string(), z.string()),
   attributes: z.object({
-    skeleton: z.string(),
-    header:   z.string(),
-    photo:    z.string(),
-    marker:   z.string(),
-    theme:    z.string(),
+    skeleton:   z.string(),
+    header:     z.string(),
+    photo:      z.string(),
+    marker:     z.string(),
+    theme:      z.string(),
+    mode:       z.enum(["light", "dark", "colour-field"]).optional(),
+    strategy:   z.enum(["event-led", "role-led"]).optional(),
+    typography: z.string().optional(),
   }),
   tags: z.array(z.string()),
   requires: z.object({

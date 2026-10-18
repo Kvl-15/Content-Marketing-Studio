@@ -25,3 +25,12 @@
 ## Session routine
 - At the START of every session: read this file and docs/PROGRESS.md, then tell me where we are.
 - At the END of every task: update docs/PROGRESS.md (see its rules) before you say the task is finished.
+
+## Design rules (every look and every change)
+- Clean: one idea per card, generous whitespace, at most 2 palette colours plus neutrals.
+- Hierarchy: the name is the biggest and most readable element, the role second, everything else quiet. The role must be recognisable in grayscale (a label or shape, not colour alone).
+- Spacing: 3 mm safe margin; spacing steps of 1, 2, 3 or 4 mm; align to shared edges or the centre axis; no near-miss alignments.
+- Print-safe: no lines under 0.3 mm, no very light greys, no transparency, text kept inside its box (D-20 rules).
+- Works with any palette and any role colour; text colours must pass the contrast check.
+- The validator catches errors, not taste: every design change must be reviewed in the gallery (scripts/preview-gallery.js) before it counts as done.
+

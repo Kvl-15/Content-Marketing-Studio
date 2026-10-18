@@ -343,7 +343,9 @@ export function autofix(input) {
       const darkRatio = contrastRatio("#111827", bgFill);
 
       const candidates =
-        whiteRatio >= darkRatio ? ["#FFFFFF", "#111827"] : ["#111827", "#FFFFFF"];
+        whiteRatio >= darkRatio
+          ? ["#FFFFFF", "#111827", "#000000"]
+          : ["#111827", "#000000", "#FFFFFF"];
 
       for (const candidate of candidates) {
         if (candidate === node.fill) continue;

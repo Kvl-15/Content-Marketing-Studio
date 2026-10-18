@@ -1,0 +1,39 @@
+{
+  "$schema": "compatibility-rules-v1",
+  "disallowedCombinations": [
+    {
+      "skeleton": "full-photo",
+      "blocks": { "header": "header.solid" },
+      "reason": "Full photo skeleton does not permit heavy solid header bands"
+    },
+    {
+      "skeleton": "sidebar",
+      "blocks": { "header": "header.solid" },
+      "reason": "Sidebar skeleton requires a vertical header block"
+    },
+    {
+      "skeleton": "sidebar",
+      "blocks": { "header": "header.thin-line" },
+      "reason": "Sidebar skeleton requires a vertical header block"
+    },
+    {
+      "skeleton": "sidebar",
+      "blocks": { "header": "header.diagonal" },
+      "reason": "Sidebar skeleton requires a vertical header block"
+    }
+  ],
+  "maxRolesLimits": {
+    "look.playful": 3,
+    "look.bold": 6,
+    "look.minimal": 6,
+    "look.tech": 6,
+    "look.formal": 6,
+    "look.editorial": 6
+  },
+  "paletteRules": {
+    "colour-field": {
+      "maxLightness": 0.90,
+      "minSaturation": 0.15
+    }
+  }
+}

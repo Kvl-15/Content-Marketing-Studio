@@ -1,0 +1,33 @@
+{
+  "id": "look.editorial",
+  "skeleton": "portrait",
+  "theme": "dark",
+  "blocks": {
+    "header": "header.thin-line",
+    "photo": "photo.rounded",
+    "info": "info.centered",
+    "roleMarker": "marker.bottom-bar"
+  },
+  "attributes": {
+    "skeleton": "portrait",
+    "header": "thin-line",
+    "photo": "rounded",
+    "marker": "bottom-bar",
+    "theme": "dark",
+    "mode": "dark",
+    "strategy": "role-led",
+    "typography": "serif"
+  },
+  "tags": [
+    "editorial",
+    "nordic",
+    "bold"
+  ],
+  "requires": {
+    "orientation": [
+      "portrait"
+    ],
+    "maxRoles": 6,
+    "needsPhotoSlot": false
+  }
+}

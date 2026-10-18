@@ -1,0 +1,13 @@
+{
+  "id": "marker.side-stripe",
+  "slot": "roleMarker",
+  "elements": [
+    {
+      "id": "stripe",
+      "type": "rect",
+      "box": [0, 0, 100, 100],
+      "fill": "$role.color",
+      "decor": true
+    }
+  ]
+}

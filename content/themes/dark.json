@@ -1,0 +1,12 @@
+{
+  "id": "dark",
+  "colors": {
+    "background": "#0F172A",
+    "text": "#F8FAFC",
+    "accent": "$brand.palette.secondary"
+  },
+  "fonts": {
+    "heading": "$brand.fonts.heading",
+    "body": "$brand.fonts.body"
+  }
+}

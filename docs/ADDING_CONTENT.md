@@ -10,8 +10,8 @@ A skeleton defines the physical dimensions of the card and named slots where blo
 
 1. Create a new file in `content/skeletons/<skeleton-id>.json`.
 2. Provide:
-   - `id`: unique skeleton name (e.g. `"portrait"`).
-   - `size`: `{ "w": number, "h": number }` in millimeters (e.g. CR80 is `54` x `85.6` mm).
+   - `id`: unique skeleton name (e.g. `"portrait"`, `"sidebar"`, `"full-photo"`).
+   - `size`: `{ "w": number, "h": number }` in millimeters (e.g. CR80 is `54` × `85.6` mm).
    - `slots`: object mapping slot names (`header`, `photo`, `info`, `roleMarker`, etc.) to `[x, y, w, h]` box coordinates in **millimeters** from top-left.
    - `supports`: `{ "orientation": ["portrait" | "landscape"], "photo": boolean, "qr": boolean }`.
 
@@ -42,68 +42,24 @@ A block fills one specific skeleton slot with visual elements (rectangles, image
 
 1. Create a new file in `content/blocks/<block-id>.json`.
 2. Provide:
-   - `id`: unique block name (e.g. `"header.solid"` or `"info.centered"`).
-   - `slot`: the skeleton slot this block belongs to (e.g. `"header"`).
+   - `id`: unique block name (e.g. `"header.solid"`, `"header.thin-line"`, `"info.centered"`).
+   - `slot`: the skeleton slot this block belongs to (e.g. `"header"`, `"photo"`, `"info"`, `"roleMarker"`).
    - `elements`: array of element objects.
 3. Element coordinates:
    - All `box` values `[x, y, w, h]` are in **percent (0-100)** of the parent slot.
-   - Dynamic values start with `$` (e.g. `"$role.color"`, `"$brand.logo.primary"`).
+   - Dynamic values start with `$` (e.g. `"$role.color"`, `"$theme.colors.accent"`).
    - Text elements use `bind` to link data (e.g. `"person.name"`, `"role.label"`).
    - Font sizes `size: [maxPt, minPt]` are in typographic points (1 pt = 0.3528 mm).
-   - Add optional flags when needed: `decor: true` (decorative element) and `optional: true` (can be hidden by autofix if overlapping).
-
-### Example
-```json
-{
-  "id": "header.solid",
-  "slot": "header",
-  "elements": [
-    {
-      "id": "band",
-      "type": "rect",
-      "box": [0, 0, 100, 100],
-      "fill": "$role.color",
-      "decor": true
-    },
-    {
-      "id": "logo1",
-      "type": "image",
-      "src": "$brand.logo.primary",
-      "box": [6, 15, 38, 70],
-      "fit": "contain",
-      "anchor": "left"
-    }
-  ]
-}
-```
+   - Flags: Mark backgrounds, bands, stripes, lines and ribbons `decor: true`. Set `optional: true` for decorative elements that may be hidden by autofix if overlapping.
 
 ---
 
-## 3. Adding a Theme
+## 3. Themes and Theme Derivation (D-24)
 
-A theme sets the color palette and font families for a design.
-
-1. Create a new file in `content/themes/<theme-id>.json`.
-2. Provide:
-   - `id`: unique theme identifier (e.g. `"brand-blue"`).
-   - `colors`: `{ "background": hex, "text": hex, "accent": hex or "$brand.palette.primary" }`.
-   - `fonts`: `{ "heading": font name or "$brand.fonts.heading", "body": font name or "$brand.fonts.body" }`.
-
-### Example
-```json
-{
-  "id": "brand-blue",
-  "colors": {
-    "background": "#FFFFFF",
-    "text": "#111827",
-    "accent": "$brand.palette.primary"
-  },
-  "fonts": {
-    "heading": "$brand.fonts.heading",
-    "body": "$brand.fonts.body"
-  }
-}
-```
+Themes can be pre-authored in `content/themes/<theme-id>.json` or dynamically derived from an event's 1–3 color palette by pure code (`core/themeDerivation.js`):
+- `light`: white/tinted background with guaranteed high-contrast dark text ($\ge 4.5:1$).
+- `dark`: slate-900 background with crisp white text ($\ge 4.5:1$).
+- `colour-field`: dynamic background using the primary event color, with text automatically switching between white and near-black based on relative luminance.
 
 ---
 
@@ -113,60 +69,39 @@ A look is a tested recipe that combines one skeleton, one theme, and one chosen 
 
 1. Create a new file in `content/looks/<look-id>.json`.
 2. Provide:
-   - `id`: unique look name (e.g. `"look.bold"`).
+   - `id`: unique look name (e.g. `"look.minimal"`).
    - `skeleton`: skeleton ID to use.
-   - `theme`: theme ID to use.
+   - `theme`: theme ID to use (or default theme name).
    - `blocks`: map from each skeleton slot to a chosen block ID.
-   - `attributes`: structural tags (`skeleton`, `header`, `photo`, `marker`, `theme`) used for diversity scoring.
-   - `tags`: style keywords (e.g. `["bold", "tech", "energetic"]`).
+   - `attributes`: structural tags (`skeleton`, `header`, `photo`, `marker`, `theme`, plus optional `mode`, `strategy`, `typography`) used for diversity scoring.
+   - `tags`: style keywords (e.g. `["minimal", "clean", "spacious"]`).
    - `requires`: compatibility constraints (`orientation`, `maxRoles`, `needsPhotoSlot`).
-
-### Example
-```json
-{
-  "id": "look.bold",
-  "skeleton": "portrait",
-  "theme": "brand-blue",
-  "blocks": {
-    "header": "header.solid",
-    "photo": "photo.rounded",
-    "info": "info.centered",
-    "roleMarker": "marker.bottom-bar"
-  },
-  "attributes": {
-    "skeleton": "portrait",
-    "header": "solid",
-    "photo": "rounded",
-    "marker": "bottom-bar",
-    "theme": "blue"
-  },
-  "tags": ["bold", "tech", "energetic"],
-  "requires": {
-    "orientation": ["portrait"],
-    "maxRoles": 6,
-    "needsPhotoSlot": false
-  }
-}
-```
 
 ---
 
-## 5. Testing Content
+## 5. Declarative Compatibility Rules (spec 9.5)
 
-Whenever you add or change JSON files in `content/`:
+Add disallowed combinations or role limits to `content/compatibility.json`:
+- `disallowedCombinations`: rules preventing incompatible block and skeleton combinations (e.g. `full-photo` cannot use heavy `header.solid`).
+- `maxRolesLimits`: role capacity limits per look.
 
-1. **Verify schemas & cross-references**:
+---
+
+## 6. Testing & Visual Verification
+
+1. **Verify schemas, references, and stress tests**:
    ```bash
    npx vitest run core/content.test.js
    ```
-   This ensures:
-   - Every file matches its Zod schema.
-   - All skeleton, theme, and block IDs referenced by looks actually exist.
-   - Every block's slot matches the skeleton's slot definition.
-   - Golden SVG output remains unchanged.
+   Runs:
+   - Schema validation across all JSON files in `content/`.
+   - Cross-reference integrity.
+   - Declarative compatibility checks.
+   - Distinctness distance rule verification ($\ge 5$ across two non-overlapping groups of 3).
+   - Stress test: 6 looks × 200 random palettes × 3 persons (zero validator errors).
 
-2. **Preview a card visually**:
+2. **Generate and inspect visual gallery**:
    ```bash
-   node scripts/preview-card.js personNormal
+   node scripts/preview-gallery.js
    ```
-   This renders `card-personNormal.svg` using the loaded content.
+   Generates `gallery.html` showing a full matrix of looks against multiple real-world color palettes. Open `gallery.html` in any browser.
