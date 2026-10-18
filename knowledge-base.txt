@@ -55,7 +55,7 @@ D-08	Fonts are bundled in the repo (open-licensed).	Identical output on every ma
 D-09	Errors block export. Warnings need user acknowledgement.	Nothing broken gets printed.
 D-10	Participant names, emails and photos are never sent to a cloud AI. Only brief text and CSV headers are.	Privacy.
 D-11	Rendering is deterministic: same input gives same output.	Reliable, testable with golden files.
-D-12	Every AI step has a non-AI fallback (form, buttons).	Tool must work if the AI is down or limits change.
+D-12	Every AI step has a non-AI fallback (form, buttons). The core path (CSV, drafts, export) works without AI. The AI gateway is swappable: model name in config, one interface.	The product must survive API, pricing and model changes, and a change of maintainers.
 D-13	Every value carries a status and a source. Unaccepted AI suggestions are never printed.	Main guard against invented details.
 D-14	Database is MongoDB on a club-owned account, with backups and project ZIP export.	Familiar stack. Revisit if relational needs grow (see Part 14).
 D-15	Distinct drafts come from a weighted difference score over pre-built looks, not from randomness.	Predictable, explainable variety.
@@ -63,7 +63,17 @@ D-16	Mandatory ID card workflow is finished before any other design type.	Brief 
 D-17	Layouts are pre-made looks. The AI never generates layouts. It may only give style hints (tags such as bold or minimal) that add a small bonus in the picker. Confirms D-01 and D-15.	No garbled text or distorted logos. Validator and tests cover a known set of looks.
 D-18	JavaScript with Zod for now. TypeScript is deferred. Use ES modules ("type": "module") in all packages, and // @ts-check with JSDoc in core/. JSON Schema for the AI is exported from the Zod schemas (any helper library needs team approval under Part 0.2).	The team is not comfortable with TypeScript. Zod checks real data at runtime, such as AI output, CSV rows and API requests.
 D-19	Schemas and function signatures are frozen in week 1: EventSpec, Person, Brand kit, Skeleton, Block, Look, SceneNode, Issue, Operation, and renderCard, validate, applyOperation, pickThree. Changes go through the whole team and are recorded here.	The other two people are blocked until Person A publishes them.
-
+D-20	Text fitting order: (1) one line, shrinking only down to oneLineFloor; (2) if that fails, split into at most 2 lines at the largest size that fits; (3) if nothing fits at the minimum size, truncate with "..." and raise TEXT_TRUNCATED. Replaces steps 3 to 5 of 10.6. Adds one optional field, oneLineFloor, to text elements (additive, D-19 followed).	Names must stay readable. A small shrink is better than splitting, and splitting is better than tiny text.
+D-21	The validator is validate(scene, context?). The second argument is optional (additive, so validate(scene) still works and skips the checks that need context). context = { card, brand, font, person, event }. renderCard builds and passes it. Scene nodes and block elements get an optional boolean decor (true for backgrounds, bands and bars); OVERLAP checks only nodes that are not decor.	Context hidden on the scene is lost on copy or JSON. Name patterns for background shapes are fragile. An explicit flag is safe.
+D-22	Autofix never lowers name text below its declared minimum (6.5 pt). Other text may go at most 1 pt below its declared minimum and never below 5 pt; nothing is lowered if the declared minimum is already 5 pt or less. Overrides step 1 of 11.3.	Names must stay readable (D-20). Autofix must not undo that.
+D-23	Optional boolean optional on block elements and scene nodes. Autofix may hide only nodes with optional: true that are involved in an error. Decor nodes (header band, role bar, background) are never hidden. autofix returns { scene, issues, fixes } and renderCard additively returns fixes.	Hiding decor would remove role coding. fixes lets the UI and preflight show what changed.
+D-24	Each event has a palette of 1 to 3 colours. Themes (light, dark, colour-field) are derived from it by core/themeDerivation.js, with WCAG contrast guaranteed. Role colours stay separate from the palette.	Cards follow the event identity and text stays readable.
+D-25	The three drafts for one event must be clearly different from each other in structure, not only colour (9.6). Different events may look alike, so there is no random variation.	Gives the user a real choice and keeps output repeatable.
+D-26	DEFERRED. AI-generated designs, later, in our JSON format (17.1, option B first, then C), gated by schema, stress test and a gallery review. D-17 stays until this is decided.	Hand-made templates are the reliable default. AI designs only once they can be checked.
+D-27	DEFERRED. Design rework: colour roles (dominant, neutral, accent, role colours on small pills), a larger type scale, a composer that assembles looks from layouts, shapes, patterns and fonts, and two-sided cards (card sides: front or both).	The current looks are provisional (D-30). Work resumes after the core pipeline is complete.
+D-28	All SVG text is drawn as path outlines using the same font that measured it. No <text> element and no font-family in the output. The validator adds TEXT_UNSUPPORTED_GLYPH.	Preview, print and measurement are identical, with no font fallback.
+D-29	Image elements may carry an optional plate ("auto" or fill, radiusMm, paddingMm): a rounded plate behind a logo on dark or coloured backgrounds.	Logos with white backgrounds look like stickers otherwise.
+D-30	Templates v0: the six current looks (Minimal, Bold, Tech, Formal, Playful, Editorial) are provisional templates. Formal and Tech are the keepers. Design quality work is paused and we build with these.	Finish the core pipeline first. Known design issues are listed in 9.8.
 0.4 Open questions
 ID	Question	Current assumption
 OQ-01	Where is the tool hosted, and who owns the server?	A club or college machine. Decide before building export.
@@ -325,8 +335,8 @@ Skeleton slots are [x, y, w, h] in millimeters. Block element boxes are [x, y, w
  
 // content/blocks/info.centered.json (text element example)
 { "id": "name", "type": "text", "bind": "person.name", "font": "heading",
-  "size": [9, 5], "maxLines": 2, "align": "center" }
-// "size": [9,5] means start at 9 pt, shrink to no less than 5 pt
+  "size": [9, 6.5], "oneLineFloor": 7.5, "maxLines": 2, "align": "center" }
+// "size": [9, 6.5] means start at 9 pt, never go below 6.5 pt. "oneLineFloor": 7.5 means on one line shrink at most to 7.5 pt, then split into two lines (D-20)
  
 // content/themes/brand-blue.json
 { "id": "brand-blue",
@@ -349,9 +359,12 @@ Box = { x, y, w, h }
 SceneNode =
   { type: "rect",  id, box, fill, radius? }
   { type: "image", id, box, href, srcW, srcH, clip?: "circle"|"rounded" }
+  // image nodes may also carry plate?: "auto" | { fill, radiusMm, paddingMm }, a rounded plate behind a logo on dark or coloured backgrounds (D-29)
   { type: "text",  id, box, lines[], sizeMm, font, fill,
                    anchor: "start"|"middle"|"end", status: "ok"|"truncated" }
   { type: "path",  id, box, d, fill }        // QR code, text outlines
+  // every node may also carry decor?: boolean. true = background or decoration, skipped by the OVERLAP check (D-21)
+  // every node may also carry optional?: boolean. true = autofix may hide it when it is involved in an error (D-23)
  
 Issue = { severity: "error"|"warning", code, nodeId?, message }
 5.6 DesignConfig and overrides
@@ -461,7 +474,7 @@ Error	No name, no role, duplicate ID.	Blocks export until fixed or the row is ex
 The user can fix cells inline or exclude rows. Original uploaded files are kept so the import can be re-run.
 8.3 Photos: practical notes
 •	Google Forms exports contain Drive links that the server cannot fetch without authorization. The supported route is to download the Forms upload folder as a ZIP and upload it.
-•	A missing photo becomes an initials avatar drawn in the role color.
+•	A person with no photo gets an initials avatar and a NO_PHOTO warning. If the photo field exists but the image data is missing, a neutral silhouette is drawn.
 •	Previews use small copies. Export uses full-resolution processed copies.
 •	Process photos once at import, not on every render.
 8.4 Test fixture
@@ -545,6 +558,7 @@ AI hints unavailable	Skip the hint bonus. The score alone decides.
 •	New theme: add one JSON file in content/themes/.
 •	New skeleton: add a JSON file with slots, then author blocks for its slots.
 •	Write the steps in docs/ so future members can follow them.
+•	The loader scripts/loadContent.js validates every JSON file with its Zod schema and names the file when something is wrong. content/compatibility.json holds the compatibility rules (9.5). The steps are in docs/ADDING_CONTENT.md.
 9.5 Compatibility rules
 Some combinations are invalid (for example a full-bleed photo skeleton cannot use a solid header band). Store these as small declarative lists next to the content. Prefer shipping named looks (tested combinations) over free combination. The validator is the final safety net.
 9.6 Guaranteeing clearly different drafts
@@ -557,6 +571,16 @@ Different means different in structure, not only in color. The AI never draws (D
 •	Test: for the example event, a unit test checks that pickThree returns three looks and that every pair meets MIN_PAIR_DISTANCE.
 •	Design review: Person C reviews the three drafts side by side at thumbnail size. If two look alike at a glance, change the looks, not the scoring.
 •	Later: the AI may write a new look as JSON (Part 17.1). It only enters the library if it passes the schema and the stress test.
+•	Distinctness applies within one event (D-25). Different events are allowed to look alike.
+9.7 Event palette and theme derivation (D-24)
+•	Each event has 1 to 3 colours. core/themeDerivation.js turns them into a theme in one of three modes: light, dark or colour-field.
+•	The derivation guarantees contrast (WCAG 2.1: 4.5, or 3 for large text). A palette that is too pale or too similar is corrected, not rejected.
+•	Role colours are separate from the palette. Known issue, deferred (D-27): a fixed role colour can clash with the palette, so role colours should move to small pills.
+9.8 Templates v0 (D-30)
+•	The six looks in content/looks/ (Minimal, Bold, Tech, Formal, Playful, Editorial) are provisional. Formal and Tech are the keepers. We build with them while the design work is paused.
+•	Known design issues, deferred: the role colour clashes with many palettes; name type is small (9 pt start); four looks share one layout; logos with white backgrounds look like stickers on colour; the dark looks use a fixed navy.
+•	The validator catches errors, not taste. "No errors" in the gallery does not mean good-looking, so every design change is reviewed in the gallery (scripts/preview-gallery.js).
+•	New designs follow the design rules in docs/AGENT_RULES.md.
 Part 10: Renderer
 Location: core/. Entry point: renderCard in core/render.js. Purpose: turn a design, brand, event and one person into an SVG card, a scene graph and an issue list. Pure function, no I/O (D-06).
 10.1 Pipeline
@@ -572,9 +596,9 @@ export function renderCard(input) {
   const elements = assemble(input.look, input.skeleton, input.blocks);
   const ctx      = buildContext(input);   // person, role, brand, theme, event
   let scene      = layout(resolve(elements, ctx), ctx);
-  let issues     = validate(scene);
-  ({ scene, issues } = autofix({ ...input, scene, issues }));
-  return { svg: emitSvg(scene, input.size, input.bleed), scene, issues };
+  let issues     = validate(scene, ctx);  // ctx = { card, brand, font, person, event } (D-21)
+  const { fixes, ...fixed } = autofix({ ...input, scene, issues });  // fixes: repairs applied (D-23)
+  return { svg: emitSvg(fixed.scene, input.size, input.bleed), scene: fixed.scene, issues: fixed.issues, fixes };
 }
 10.2 Assemble
 For each slot in the skeleton, take the chosen block's elements (written as percent of the slot) and convert to millimeters on the card.
@@ -589,7 +613,7 @@ Replace $role.color, $brand.logo.primary, $theme... and bind values from a conte
 10.4 Prepare assets
 •	Fonts: load bundled font files once with opentype.js and cache them. All measurement uses these exact files.
 •	Logos: read intrinsic width and height (from the SVG viewBox or raster size).
-•	Photo: already cropped at import. Missing photo becomes an initials avatar in the role color.
+•	Photo: already cropped at import. A person with no photo gets an initials avatar and a NO_PHOTO warning. If the photo field exists but the image data is missing, a neutral silhouette is drawn.
 •	QR: generate as vector path data from the person's check-in URL.
 •	After preparation, the rest of the pipeline is synchronous, which keeps it fast and easy to test.
 10.5 Layout rules
@@ -610,16 +634,22 @@ const y = box.y + (box.h - h) / 2;
 This is where most card tools fail, so it must be exact.
 1.	Measure with the real font file: font.getAdvanceWidth(text, size) (includes kerning). Never estimate by character count.
 2.	Wrap at spaces. A single very long word with no spaces is shrunk first, then force-broken as a last resort.
-3.	Try sizes from the maximum down to the minimum in 0.1 steps. Accept the first size where lines are within maxLines and the widest line fits.
-4.	Prefer two lines at a readable size over one line at an unreadable size.
+3.	Try one line first. Shrink from the maximum size down to oneLineFloor in 0.1 mm steps. Accept the first size where the whole text fits on one line (D-20).
+4.	If that fails, split at spaces into at most maxLines (2) lines. Try sizes from the maximum down to the minimum and accept the first size where the line count is within maxLines and the widest line fits. A single long word shrinks first and is force-broken only at the minimum size.
 5.	If nothing fits at the minimum size, keep maxLines, add an ellipsis to the last line, and set status: "truncated". This becomes a warning. Nothing is silently clipped.
-function fitText(font, text, box, maxMm, minMm, maxLines) {
+function fitText(font, text, box, maxMm, floorMm, minMm, maxLines) {
+  // 1. one line, small shrink only
+  for (let s = maxMm; s >= floorMm; s -= 0.1)
+    if (measure(font, text, s) <= box.w)
+      return { lines: [text], sizeMm: s, status: "ok" };
+  // 2. split into at most maxLines, largest size that fits
   for (let s = maxMm; s >= minMm; s -= 0.1) {
     const lines  = wrap(font, text, s, box.w);
     const widest = Math.max(...lines.map(l => measure(font, l, s)));
     if (lines.length <= maxLines && widest <= box.w)
       return { lines, sizeMm: s, status: "ok" };
   }
+  // 3. truncate
   const lines = wrap(font, text, minMm, box.w).slice(0, maxLines);
   lines[lines.length - 1] = ellipsize(font, lines.at(-1), minMm, box.w);
   return { lines, sizeMm: minMm, status: "truncated" };
@@ -630,7 +660,7 @@ Unit conversion: design files give font sizes in points. 1 pt = 0.3528 mm. Conve
 •	Extend background shapes into the bleed area. Keep text inside the safe area.
 •	Escape XML characters in text (&, <, >, quotes). A name like R&D must become R&amp;D.
 •	Embed photos as data URIs so each SVG is self-contained.
-•	Text is emitted as <text> with the font, or converted to <path> outlines for printer-safe files.
+•	Text is always drawn as <path> outlines, using the same font that measured it (D-28). The output has no <text> element and no font-family. Each text node is wrapped in <g id aria-label> so the scene stays readable.
 <svg xmlns="http://www.w3.org/2000/svg" width="60mm" height="91.6mm"
      viewBox="-3 -3 60 91.6"> ... shapes ... </svg>
 10.8 Why a scene graph first
@@ -641,10 +671,12 @@ Unit conversion: design files give font sizes in points. 1 pt = 0.3528 mm. Conve
 Both in the browser (live preview and editor) and on the server (preflight and export), using the same core/ code. This guarantees that the preview matches the print.
 Part 11: Validator and Auto-fix
 Location: core/validate.js and core/autofix.js. The validator runs on every render: on drafts, after each edit, in preflight, and before export.
+Signature: validate(scene, context?) returns issues. The second argument is optional (D-21). context = { card, brand, font, person, event }. With one argument, the checks that need context (safe margin, logo size, re-measuring text) are skipped.
 11.1 Checks
 Code	Check	How it is measured	Severity
 TEXT_TRUNCATED	Text was cut	Text node status is truncated	Warning
 TEXT_OVERFLOW	Text exceeds its box	Measured width or height larger than box	Error
+TEXT_UNSUPPORTED_GLYPH	A character has no glyph	Glyph index 0 in the font	Error
 OVERLAP	Elements overlap	Rectangle intersection among content elements	Error
 LOGO_DISTORTED	Logo aspect changed	Drawn w/h differs from source w/h by more than about 0.5%	Error
 LOGO_CLEARSPACE	Logo too close to others	Distance below the brand kit clear space	Error
@@ -663,15 +695,29 @@ NO_PHOTO	Photo missing	Fallback avatar used	Warning
 •	Warning: the user must acknowledge it in preflight.
 11.3 Auto-fix order
 If a render has errors, try fixes one at a time, re-running layout and validation after each. Stop when no errors remain.
-1.	Lower the minimum text size slightly (within a floor of readability, for example 5 pt).
-2.	Hide optional decorative elements.
+1.	Lower text size slightly, then re-fit the text. Name text is never lowered below its declared minimum (6.5 pt, D-22). Other text may go at most 1 pt below its declared minimum and never below 5 pt. If the declared minimum is already 5 pt or less, nothing is lowered.
+2.	Hide optional elements (optional: true) that are involved in the error. Decor elements such as the header band and role bar are never hidden (D-23).
 3.	Switch text color to white or near-black, whichever passes contrast.
-4.	Switch to a more compact density.
+4.	Switch to a more compact density (a no-op until the renderer supports density).
 If errors remain after all fixes: during draft selection the draft is dropped; during preflight the card is flagged for a person to fix (for example shorten a nickname).
 11.4 Rules for adding a check
 •	A check is a pure function: scene graph in, issue list out.
 •	Give it a unique code, a clear message, and a unit test with a failing and a passing case.
 •	Decide error versus warning deliberately and record it in this table.
+11.5 Notes from the first implementation (D-21)
+•	OVERLAP checks only nodes that are not decor. Backgrounds, header bands and bottom bars carry decor: true.
+•	LOW_CONTRAST finds the background behind a text node as the topmost decor rectangle that contains the text box, otherwise the theme background.
+•	TEXT_OVERFLOW re-measures with the same font and the same line height constant the renderer uses.
+•	UNFILLED_DATA matches placeholder patterns such as $brand.logo or {{ }}, not a bare $. A name like Cash$ is valid.
+•	LOGO_MISSING counts a placeholder logo as present. It fires only if the brand kit marks a logo as mandatory and no node exists for it. Revisit when the real logos arrive.
+•	OUTSIDE_SAFE_MARGIN reads card.safeMarginMm from the context. If it is missing, the check is skipped.
+•	PHOTO_LOW_RES is deferred to preflight.
+•	TEXT_UNSUPPORTED_GLYPH reports characters that have no glyph in the font, so a name in an unsupported script is flagged instead of being printed as empty boxes (D-28, OQ-04).
+11.6 Autofix rules (D-22, D-23)
+•	A repair is kept only if it reduces the number of errors and adds none. Otherwise it is undone.
+•	Each repair is tried at most once, in the order above. The same input gives the same output, and running autofix on its own output changes nothing.
+•	Autofix never changes text content, logo size or aspect ratio, missing data, photos or warnings. TEXT_TRUNCATED is not repaired.
+•	autofix returns { scene, issues, fixes }. fixes lists the repairs that were applied. A no-op is not listed.
 Part 12: Refinement and Editing
 Edits never change pixels. They are operations applied as overrides on top of the chosen look (D-01, D-04).
 12.1 Layers
@@ -784,6 +830,7 @@ Exports always read from a saved version, never half-edited data. Each export re
 13.7 Known limits to tell users
 •	Output is RGB. Most campus print shops accept RGB. A CMYK conversion step can be added later (OQ-05).
 •	Names are English (Latin script) only. Gujarati and Devanagari are not supported (OQ-04 closed).
+•	Very long names (for example a 28-letter single word plus a long surname) can be truncated at two lines. The card gets a TEXT_TRUNCATED warning and the user is asked to shorten or edit the name.
 Part 14: Persistence, State Machine and API
 14.1 Project state machine
 BRIEF_RECEIVED -> PARSED -> NEEDS_INFO -> SPEC_COMPLETE -> DATA_READY
@@ -852,10 +899,10 @@ AI contract tests	Feed saved sample AI replies (valid, invalid, hallucinated) to
 End-to-end	Brief to export on a sample project (Playwright or manual checklist).
 Physical print test	Print one real card early on the actual printer. Check size, margins, color, logo sharpness.
 
-15.4 Demo-readiness
-•	Prepare a real CSV with 20 or more messy rows and a photo set to demonstrate reliability.
-•	Have a pre-printed sample card.
-•	Rehearse the offline path: show that the form works when the AI is unavailable.
+15.4 Release readiness (first real event)
+•	Prepare a real CSV with 20 or more messy rows and a photo set from a real event, and run the whole flow: import, drafts, edits, preflight and export.
+•	Print a sample batch on the real printer and check size, cutting, color and legibility.
+•	Test the AI-off path: the form and the mood buttons work when the AI is unavailable (D-12).
 15.5 Handover
 •	README with setup in a few commands.
 •	docs/ pages: add a block, add a look, add a brand kit, add a design type, add a validator check.
@@ -920,10 +967,10 @@ Phase and done when	A	B	C
 3. Drafts and intake (weeks 3 to 4). Done when: three distinct drafts appear for the example brief.	Picker, stress set, assemble from content JSON	AI gateway, parsing, gap analysis, form fallback	Question form, draft gallery, role switcher
 4. Export (weeks 4 to 5). Done when: an A4 sheet of 8 cards prints and cuts cleanly.	Support B with renderer fixes	PDF, PNG, print sheets, ZIP, progress	Export settings screen, progress view
 5. Refinement (week 5). Done when: "make it more minimal" applies and can be undone.	Operations, undo/redo, versions, properties panel	AI edit mapping, version storage	Support the panel UI, QA
-6. Polish (week 6). Done when: the demo runs end to end with the AI off.	Golden tests, edge cases	Preflight, backups, project ZIP	QA, README, demo rehearsal, offline-AI demo
+6. Polish (week 6). Done when: a first real event runs end to end, with the AI turned off as a test, and the handover docs are complete.	Golden tests, edge cases	Preflight, backups, project ZIP	QA, README and handover docs, first real event dry run, AI-off test
 Contracts Person A publishes first, in week 1 (D-19):
 •	Zod schemas: EventSpec, Person, Brand kit, Skeleton, Block, Look, SceneNode, Issue, Operation.
-•	Function signatures: renderCard(input) returns {svg, scene, issues}; validate(scene) returns issues; applyOperation(design, op) returns design; pickThree(...).
+•	Function signatures: renderCard(input) returns {svg, scene, issues, fixes}; validate(scene, context?) returns issues; applyOperation(design, op) returns design; pickThree(...).
 •	A stub renderCard that returns a hardcoded SVG, so the frontend can integrate immediately.
 Working agreements:
 •	Changes to a schema or function signature go through the whole team and are recorded in this document.
@@ -942,6 +989,7 @@ C. Full SVG with required slots	A card SVG containing elements with fixed IDs.	M
 D. Freehand whole card	Everything including text.	Low. Avoid.
 
 Required safeguards for any AI-made SVG: sanitize (remove script, event handlers, foreignObject, external links), allow only simple shapes, paths, gradients and clip paths, forbid text, require a known viewBox, cap file size and node count, restrict colors to the palette or theme variables, require a clean render test, and require human approval before it enters the shared library. Hand-made looks stay the reliable default.
+Plan (D-26, deferred): when the core pipeline is complete, try option B first (the AI writes a look in our JSON format), then option C only with the strict checks above. Every AI design passes the schema, the stress test and a gallery review before it is saved as a template. Hand-made templates stay the reliable default, and D-17 stays until this is decided.
 17.2 Other design types
 •	Certificates: A4 landscape, fields recipient, achievement, date, signatories, certificate ID, QR for verification. Same renderer, validator, brand kit and batch pipeline.
 •	Posters and banners: no per-person data, so a single instance. Different page sizes and templates.

@@ -51,6 +51,7 @@ A block fills one specific skeleton slot with visual elements (rectangles, image
    - Text elements use `bind` to link data (e.g. `"person.name"`, `"role.label"`).
    - Font sizes `size: [maxPt, minPt]` are in typographic points (1 pt = 0.3528 mm).
    - Flags: Mark backgrounds, bands, stripes, lines and ribbons `decor: true`. Set `optional: true` for decorative elements that may be hidden by autofix if overlapping.
+   - Logo plates: Set `plate: "auto"` or `plate: { fill, radiusMm, paddingMm }` on logo image elements to automatically draw a protective white background plate behind the logo on dark or saturated backgrounds (D-29).
 
 ---
 

@@ -499,10 +499,53 @@ export function checkUnconfirmedValue(event) {
 }
 
 /**
+ * TEXT_UNSUPPORTED_GLYPH (Error)
+ * Checks each text node for any character that maps to glyph index 0 (.notdef) in its font.
+ *
+ * @param {any[]} scene
+ * @param {any} [font]
+ * @param {any} [fonts]
+ * @returns {any[]}
+ */
+export function checkTextUnsupportedGlyph(scene, font, fonts) {
+  if (!font && !fonts) return [];
+  /** @type {any[]} */
+  const issues = [];
+  for (const node of scene) {
+    if (node.type !== "text" || !Array.isArray(node.lines)) continue;
+    const isHeading = node.fontRole === "heading" || node.bind === "person.name" || node.id === "name";
+    const nodeFont = (isHeading ? fonts?.heading : fonts?.body) || font || fonts?.heading;
+    if (!nodeFont || typeof nodeFont.charToGlyph !== "function") continue;
+
+    let unsupportedChar = null;
+    for (const line of node.lines) {
+      for (const char of line) {
+        const glyph = nodeFont.charToGlyph(char);
+        if (glyph && glyph.index === 0) {
+          unsupportedChar = char;
+          break;
+        }
+      }
+      if (unsupportedChar) break;
+    }
+
+    if (unsupportedChar) {
+      issues.push({
+        severity: "error",
+        code: "TEXT_UNSUPPORTED_GLYPH",
+        nodeId: node.id,
+        message: `Text in node "${node.id}" contains unsupported character "${unsupportedChar}" (glyph index 0 in font)`,
+      });
+    }
+  }
+  return issues;
+}
+
+/**
  * Validates a scene graph and context against all design and brand rules.
  *
  * @param {any[]} scene - Array of SceneNodes
- * @param {Record<string, any>} [context={}] - Optional context { card, brand, font, person, event, theme }
+ * @param {Record<string, any>} [context={}] - Optional context { card, brand, font, fonts, person, event, theme }
  * @returns {any[]} List of validation issues
  */
 export function validate(scene, context = {}) {
@@ -510,6 +553,7 @@ export function validate(scene, context = {}) {
   /** @type {any[]} */
   const issues = [];
 
+  issues.push(...checkTextUnsupportedGlyph(scene, context.font, context.fonts));
   issues.push(...checkTextTruncated(scene));
   issues.push(...checkTextOverflow(scene, context.font));
   issues.push(...checkOverlap(scene));

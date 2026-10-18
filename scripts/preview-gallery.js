@@ -71,8 +71,8 @@ let html = `<!DOCTYPE html>
     .palette-swatch { display: flex; gap: 4px; margin-top: 6px; }
     .swatch { width: 16px; height: 16px; border-radius: 3px; border: 1px solid rgba(255,255,255,0.2); }
     .card-cell { background: #111827; border: 1px solid #374151; border-radius: 8px; padding: 12px; display: flex; flex-direction: column; align-items: center; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.4); }
-    .svg-container { width: 150px; height: 238px; display: flex; justify-content: center; align-items: center; }
-    .svg-container svg { width: 100%; height: 100%; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3)); border-radius: 4px; }
+    .svg-container { width: 150px; height: 238px; display: flex; justify-content: center; align-items: center; border-radius: 8.83px; overflow: hidden; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.08); }
+    .svg-container svg { width: 100%; height: 100%; display: block; }
     .card-meta { margin-top: 8px; font-size: 11px; text-align: center; color: #9CA3AF; line-height: 1.4; }
     .badge { display: inline-block; padding: 2px 6px; border-radius: 9999px; font-size: 10px; font-weight: 600; margin-top: 4px; }
     .badge-ok { background: #064E3B; color: #6EE7B7; }
@@ -81,8 +81,8 @@ let html = `<!DOCTYPE html>
   </style>
 </head>
 <body>
-  <h1>ID Card Studio - Look Gallery (Task 7B)</h1>
-  <p>6 Distinct Looks × 6 Event Palettes. Rendered with pure theme derivation (D-24) and guaranteed distinctness (D-25).</p>
+  <h1>ID Card Studio - Look Gallery (Task D1)</h1>
+  <p>6 Distinct Looks × 6 Event Palettes. Rendered with vector text outlines (D-28), logo plates (D-29), and photo placeholders.</p>
 
   <h2>Section 1: Main Matrix (personNormal)</h2>
   <div class="grid">

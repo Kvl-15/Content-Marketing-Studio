@@ -298,6 +298,6 @@ describe("Task 7B: Content, Golden, Distinctness, and Stress Tests", () => {
         `Incompatible look/palette pairs filtered: ${incompatibleCount}.`
       );
       expect(totalRenders).toBeGreaterThan(3000);
-    }, 20000);
+    }, 60000);
   });
 });

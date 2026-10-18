@@ -39,5 +39,15 @@ describe("core/stubs", () => {
     const result = pickThree(items);
     expect(result).toHaveLength(3);
     expect(result).toEqual(["look.1", "look.2", "look.3"]);
+
+    // With look objects containing attributes
+    const looks = [
+      { id: "A", attributes: { skeleton: "s1", header: "h1", photo: "p1", marker: "m1", theme: "t1" }, tags: [] },
+      { id: "B", attributes: { skeleton: "s2", header: "h2", photo: "p2", marker: "m2", theme: "t2" }, tags: [] },
+      { id: "C", attributes: { skeleton: "s3", header: "h3", photo: "p3", marker: "m3", theme: "t3" }, tags: [] },
+      { id: "D", attributes: { skeleton: "s1", header: "h1", photo: "p1", marker: "m1", theme: "t1" }, tags: [] },
+    ];
+    const picked = pickThree(looks);
+    expect(picked).toHaveLength(3);
   });
 });

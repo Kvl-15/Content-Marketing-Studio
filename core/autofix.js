@@ -288,10 +288,24 @@ export function autofix(input) {
         involvedIds.push(overlapMatch[1]);
       }
 
+      // Drop priority when crowded: QR first, then org, then ID line. Never drop name, role, or logos.
+      const getPriority = (/** @type {string} */ elId) => {
+        if (elId.startsWith("qr")) return 1;
+        if (elId === "org") return 2;
+        if (elId === "id-line" || elId === "id") return 3;
+        return 10;
+      };
+      involvedIds.sort((a, b) => getPriority(a) - getPriority(b));
+
       for (const id of involvedIds) {
         if (countErrors(currentIssues) === 0) break;
         if (triedHideIds.has(id)) continue;
         triedHideIds.add(id);
+
+        // Never drop name, role, or logos
+        if (id === "name" || id === "role" || id === "role-pill" || id.startsWith("logo")) {
+          continue;
+        }
 
         const targetNode = currentScene.find((n) => n.id === id);
         // Hide only nodes with optional: true that are involved in the error.

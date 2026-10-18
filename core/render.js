@@ -6,13 +6,55 @@ import {
   defaultSkeleton,
   defaultTheme,
 } from "./templateData.js";
-import { fitText, PT_TO_MM } from "./text.js";
-import { deriveTheme } from "./themeDerivation.js";
-import { LINE_HEIGHT, validate } from "./validate.js";
+import { fitText, measure, PT_TO_MM, textToPathData } from "./text.js";
+import { deriveTheme, ensureContrast } from "./themeDerivation.js";
+import { contrastRatio, LINE_HEIGHT, relativeLuminance, validate } from "./validate.js";
 
 /**
  * @module core/render
  */
+
+/**
+ * Calculates HSL lightness from a 6-digit hex string.
+ *
+ * @param {string} hex
+ * @returns {number}
+ */
+function getLightness(hex) {
+  if (!hex || typeof hex !== "string" || !hex.startsWith("#") || hex.length !== 7) return 1;
+  const r = parseInt(hex.slice(1, 3), 16) / 255;
+  const g = parseInt(hex.slice(3, 5), 16) / 255;
+  const b = parseInt(hex.slice(5, 7), 16) / 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  return (max + min) / 2;
+}
+
+/**
+ * Finds the background color behind a bounding box.
+ *
+ * @param {{ x: number, y: number, w: number, h: number }} box
+ * @param {any[]} scene
+ * @param {string} fallbackBg
+ * @param {string} [excludeId]
+ * @returns {string}
+ */
+function findBackgroundBehindBox(box, scene, fallbackBg, excludeId) {
+  const decorRects = scene.filter(
+    (n) =>
+      n.type === "rect" &&
+      n.decor === true &&
+      (!excludeId || n.id !== excludeId) &&
+      n.box.x <= box.x + box.w / 2 &&
+      n.box.x + n.box.w >= box.x + box.w / 2 &&
+      n.box.y <= box.y + box.h / 2 &&
+      n.box.y + n.box.h >= box.y + box.h / 2
+  );
+  if (decorRects.length > 0) {
+    return decorRects[decorRects.length - 1].fill;
+  }
+  return fallbackBg || "#FFFFFF";
+}
 
 /**
  * Escapes XML/SVG special characters so text nodes always emit valid XML.
@@ -161,6 +203,8 @@ export function renderCard(input) {
 
   // 4. Assemble scene graph (Part 10 pipeline)
   /** @type {any[]} */
+  const preflightIssues = [];
+  /** @type {any[]} */
   let scene = [
     {
       type: "rect",
@@ -178,8 +222,8 @@ export function renderCard(input) {
     "header.solid": {
       elements: [
         { id: "band", type: "rect", box: [0, 0, 100, 100], fill: "$role.color", decor: true },
-        { id: "logo1", type: "image", box: [6, 15, 38, 70], src: "$brand.logo.primary" },
-        { id: "logo2", type: "image", box: [56, 15, 38, 70], src: "$brand.logo.secondary" },
+        { id: "logo1", type: "image", box: [6, 15, 38, 70], src: "$brand.logo.primary", plate: "auto" },
+        { id: "logo2", type: "image", box: [56, 15, 38, 70], src: "$brand.logo.secondary", plate: "auto" },
       ],
     },
     "photo.rounded": {
@@ -228,22 +272,74 @@ export function renderCard(input) {
       } else if (el.type === "image") {
         if (el.src === "$person.photo") {
           const isCircle = el.clip === "circle";
-          scene.push({
-            type: "rect",
-            id: el.id,
-            box,
-            fill: "#E5E7EB",
-            radius: isCircle ? Math.min(box.w, box.h) / 2 : 4,
-            ...(el.clip ? { clip: el.clip } : {}),
-            ...(el.decor ? { decor: el.decor } : {}),
-            ...(el.optional ? { optional: el.optional } : {}),
-          });
+          const radius = isCircle ? Math.min(box.w, box.h) / 2 : 4;
+          const isDataUri = typeof person.photo === "string" && person.photo.startsWith("data:");
+
+          if (isDataUri) {
+            scene.push({
+              type: "image",
+              id: el.id,
+              box,
+              href: person.photo,
+              srcW: 500,
+              srcH: 500,
+              ...(el.clip ? { clip: el.clip } : {}),
+              ...(el.decor ? { decor: el.decor } : {}),
+              ...(el.optional ? { optional: el.optional } : {}),
+            });
+          } else {
+            const hasPhotoField = typeof person.photo === "string" && person.photo.trim().length > 0;
+            if (hasPhotoField) {
+              scene.push({
+                type: "rect",
+                id: el.id,
+                box,
+                fill: "#E2E8F0",
+                radius,
+                clip: isCircle ? "circle" : "rounded",
+                photoMode: "silhouette",
+                ...(el.decor ? { decor: el.decor } : {}),
+                ...(el.optional ? { optional: el.optional } : {}),
+              });
+            } else {
+              let initials = "";
+              if (person.name) {
+                const parts = person.name.trim().split(/\s+/).filter(Boolean);
+                if (parts.length === 1) {
+                  initials = parts[0][0].toUpperCase();
+                } else if (parts.length > 1) {
+                  initials = (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+                }
+              }
+              if (!initials) initials = "?";
+
+              scene.push({
+                type: "rect",
+                id: el.id,
+                box,
+                fill: "#E5E7EB",
+                radius,
+                clip: isCircle ? "circle" : "rounded",
+                photoMode: "initials",
+                initials,
+                ...(el.decor ? { decor: el.decor } : {}),
+                ...(el.optional ? { optional: el.optional } : {}),
+              });
+            }
+          }
         } else {
           // Logo element (logo1 or logo2)
           const logoKey = el.id === "logo1" ? "primary" : el.id === "logo2" ? "secondary" : null;
           const logoSpec = logoKey ? brand?.logos?.[logoKey] : null;
 
-          if (logoSpec?.dataUri && logoSpec?.width && logoSpec?.height) {
+          let targetBox = box;
+          let fittedW = box.w;
+          let fittedH = box.h;
+          let fittedX = box.x;
+          let fittedY = box.y;
+          const hasRealLogo = !!(logoSpec?.dataUri && logoSpec?.width && logoSpec?.height);
+
+          if (hasRealLogo) {
             const srcW = logoSpec.width;
             const srcH = logoSpec.height;
             // Fit mode "contain": ONE scale for both axes (spec 10.4 & 10.5)
@@ -258,14 +354,94 @@ export function renderCard(input) {
                 ? box.x + box.w - fittedW
                 : box.x + (box.w - fittedW) / 2;
             const fittedY = box.y + (box.h - fittedH) / 2;
+            targetBox = { x: fittedX, y: fittedY, w: fittedW, h: fittedH };
+          }
 
+          if (el.plate) {
+            let shouldDraw = false;
+            let plateFill = "#FFFFFF";
+            let plateRadius = 1;
+            let platePadding = 1;
+
+            if (el.plate === "shared") {
+              const sharedSiblings = block.elements.filter(
+                (/** @type {any} */ e) => e.type === "image" && (e.id === "logo1" || e.id === "logo2" || e.id.startsWith("logo")) && e.plate === "shared"
+              );
+              if (sharedSiblings.length > 0) {
+                const isFirstLogo = el.id === sharedSiblings[0].id;
+                if (isFirstLogo) {
+                  const slotBoxes = sharedSiblings.map((/** @type {any} */ s) => {
+                    return toAbsolute(s.box, slotBox);
+                  });
+                  const minX = Math.min(...slotBoxes.map((b) => b.x));
+                  const minY = Math.min(...slotBoxes.map((b) => b.y));
+                  const maxX = Math.max(...slotBoxes.map((b) => b.x + b.w));
+                  const maxY = Math.max(...slotBoxes.map((b) => b.y + b.h));
+
+                  const sharedBox = {
+                    x: Math.round((minX - 1.0) * 100) / 100,
+                    y: Math.round((minY - 1.0) * 100) / 100,
+                    w: Math.round((maxX - minX + 2.0) * 100) / 100,
+                    h: Math.round((maxY - minY + 2.0) * 100) / 100,
+                  };
+
+                  const bgBehind = findBackgroundBehindBox(sharedBox, scene, bgColor);
+                  const isDarkOrSaturated = relativeLuminance(bgBehind) < 0.88 || getLightness(bgBehind) < 0.88;
+
+                  if (isDarkOrSaturated) {
+                    scene.push({
+                      type: "rect",
+                      id: "logos-plate",
+                      box: sharedBox,
+                      fill: "#FFFFFF",
+                      radius: 1.5,
+                      decor: true,
+                    });
+                  }
+                }
+              }
+            } else if (el.plate === "auto") {
+              const bgBehind = findBackgroundBehindBox(box, scene, bgColor);
+              const isDarkOrSaturated = relativeLuminance(bgBehind) < 0.9 || getLightness(bgBehind) < 0.9;
+              if (isDarkOrSaturated) {
+                shouldDraw = true;
+                plateFill = "#FFFFFF";
+                plateRadius = 1;
+                platePadding = 1;
+              }
+            } else if (typeof el.plate === "object" && el.plate !== null) {
+              shouldDraw = true;
+              plateFill = el.plate.fill || "#FFFFFF";
+              plateRadius = typeof el.plate.radiusMm === "number" ? el.plate.radiusMm : 1;
+              platePadding = typeof el.plate.paddingMm === "number" ? el.plate.paddingMm : 1;
+            }
+
+            if (shouldDraw) {
+              scene.push({
+                type: "rect",
+                id: `${el.id}-plate`,
+                box: {
+                  x: targetBox.x - platePadding,
+                  y: targetBox.y - platePadding,
+                  w: targetBox.w + platePadding * 2,
+                  h: targetBox.h + platePadding * 2,
+                },
+                fill: plateFill,
+                radius: plateRadius,
+                decor: true,
+              });
+            }
+          }
+
+          if (hasRealLogo) {
             scene.push({
               type: "image",
               id: el.id,
-              box: { x: fittedX, y: fittedY, w: fittedW, h: fittedH },
+              box: targetBox,
               href: logoSpec.dataUri,
-              srcW,
-              srcH,
+              srcW: logoSpec.width,
+              srcH: logoSpec.height,
+              ...(el.plate ? { plate: el.plate } : {}),
               ...(el.decor ? { decor: el.decor } : {}),
               ...(el.optional ? { optional: el.optional } : {}),
             });
@@ -276,6 +452,7 @@ export function renderCard(input) {
               id: el.id,
               box,
               fill: "#D1D5DB",
+              ...(el.plate ? { plate: el.plate } : {}),
               ...(el.decor ? { decor: el.decor } : {}),
               ...(el.optional ? { optional: el.optional } : {}),
             });
@@ -287,28 +464,58 @@ export function renderCard(input) {
           textVal = person.name || "";
         } else if (el.bind === "role.label") {
           textVal = roleLabel;
+        } else if (el.bind === "event.name") {
+          const rawEvName = event?.event?.name?.value ?? event?.event?.name ?? event?.name?.value ?? event?.name;
+          textVal = typeof rawEvName === "string" ? rawEvName.trim() : "";
+        } else if (el.bind === "qr" || el.id === "qr-label") {
+          textVal = "QR";
+        } else if (el.bind === "person.org" || el.bind === "org") {
+          textVal = person.org || "";
+        } else if (el.bind === "person.id" || el.bind === "id") {
+          textVal = person.id || "";
         } else {
           textVal = person[el.bind] || "";
+        }
+
+        if (!textVal && el.optional) {
+          continue;
         }
 
         const isHeading = el.font === "heading" || el.bind === "person.name";
         const font = isHeading ? fontObj : bodyFontObj;
         const fontFamily = isHeading ? headingFontFamily : bodyFontFamily;
+        const isEventName = el.bind === "event.name";
 
         let fit;
         if (font) {
+          const sizeRange = isEventName ? [el.size?.[0] || 7, Math.min(el.size?.[1] || 6, 6)] : el.size;
+          const maxLines = isEventName ? 2 : (el.maxLines || 2);
+          const fittedText = isEventName ? textVal.toUpperCase() : textVal;
+
           fit = fitText({
-            text: textVal,
+            text: fittedText,
             boxWidthMm: box.w,
             boxHeightMm: box.h,
-            sizeRangePt: el.size,
+            sizeRangePt: sizeRange,
             oneLineFloorPt: el.oneLineFloor,
-            maxLines: el.maxLines || 2,
+            maxLines,
             font,
           });
+
+          if (isEventName && fit.status === "truncated") {
+            // Event name is never truncated. If it cannot fit at 6 pt floor across 2 lines,
+            // hide it and raise a warning issue EVENT_NAME_DOES_NOT_FIT.
+            preflightIssues.push({
+              code: "EVENT_NAME_DOES_NOT_FIT",
+              message: `Event name "${textVal}" does not fit in available space at 6 pt floor; hidden`,
+              severity: "warning",
+              nodeId: el.id,
+            });
+            continue;
+          }
         } else {
           fit = {
-            lines: [textVal],
+            lines: [isEventName ? textVal.toUpperCase() : textVal],
             sizeMm: el.size[0] * PT_TO_MM,
             status: "ok",
           };
@@ -317,7 +524,15 @@ export function renderCard(input) {
         const anchor = el.align === "left" ? "start" : el.align === "right" ? "end" : "middle";
         let fill = textColor;
         if (el.fill === "$theme.colors.accent") fill = accentColor;
+        else if (el.fill === "$role.contrast") fill = contrastRatio("#FFFFFF", roleColor) >= 4.5 ? "#FFFFFF" : "#111827";
+        else if (el.fill === "$theme.colors.text") fill = textColor;
+        else if (el.fill === "$theme.colors.background") fill = bgColor;
         else if (el.fill && !el.fill.startsWith("$")) fill = el.fill;
+
+        if (isEventName) {
+          const bgBehind = findBackgroundBehindBox(box, scene, bgColor);
+          fill = ensureContrast(fill, bgBehind, 4.5);
+        }
 
         scene.push({
           type: "text",
@@ -326,6 +541,7 @@ export function renderCard(input) {
           lines: fit.lines,
           sizeMm: fit.sizeMm,
           font: fontFamily,
+          fontRole: isHeading ? "heading" : "body",
           fill,
           anchor,
           status: fit.status,
@@ -337,16 +553,50 @@ export function renderCard(input) {
     }
   }
 
+  // Role pill contrast check & repair (Rule C2c: prefer 0.6mm outline; use inversion only if outline fails)
+  /** @type {any[]} */
+  const localFixes = [];
+  for (const node of scene) {
+    if (node.type === "rect" && (node.id === "role-pill" || node.id === "pill")) {
+      const bgBehind = findBackgroundBehindBox(node.box, scene, bgColor, node.id);
+      const cr = contrastRatio(node.fill, bgBehind);
+      if (cr < 3.0) {
+        const outlineColor = (relativeLuminance(bgBehind) < 0.5 || getLightness(bgBehind) < 0.5) ? "#FFFFFF" : "#111827";
+        if (contrastRatio(outlineColor, bgBehind) >= 3.0) {
+          node.stroke = outlineColor;
+          node.strokeWidth = 0.6;
+          localFixes.push({
+            code: "ROLE_PILL_OUTLINE",
+            nodeId: node.id,
+            stroke: outlineColor,
+            strokeWidth: 0.6,
+            reason: `Role pill contrast against background (${cr.toFixed(2)}) was < 3.0; added 0.6mm outline`,
+          });
+        } else {
+          const adjustedFill = ensureContrast(node.fill, bgBehind, 3.0);
+          localFixes.push({
+            code: "ROLE_PILL_INVERT",
+            nodeId: node.id,
+            fill: adjustedFill,
+            reason: `Role pill outline failed; adjusted fill to achieve >= 3.0 contrast`,
+          });
+          node.fill = adjustedFill;
+        }
+      }
+    }
+  }
+
   // 7. Validate scene with context (D-21)
   const context = {
     card: input.card,
     brand: input.brand,
     font: fontObj,
+    fonts: input.fonts || (fontObj ? { heading: fontObj, body: bodyFontObj } : undefined),
     person: input.person,
     event: input.event,
     theme,
   };
-  let issues = validate(scene, context);
+  let issues = [...preflightIssues, ...validate(scene, context)];
 
   // 8. Autofix recoverable defects (Part 10 & 11.3, D-23)
   const autofixResult = autofix({
@@ -357,41 +607,97 @@ export function renderCard(input) {
     theme,
   });
   scene = autofixResult.scene;
-  issues = autofixResult.issues;
-  const fixes = autofixResult.fixes || [];
+  issues = [...preflightIssues, ...(autofixResult.issues || [])];
+  const fixes = [...localFixes, ...(autofixResult.fixes || [])];
 
   // 9. Emit SVG strictly from the final (repaired) scene nodes
   const svgElements = scene.map((node) => {
     if (node.type === "rect") {
+      if (node.photoMode === "silhouette") {
+        const clipId = `clip-${node.id}`;
+        const radius = node.radius ?? 4;
+        const isCircle = node.clip === "circle";
+        const clipShape = isCircle
+          ? `<circle cx="${node.box.x + node.box.w / 2}" cy="${node.box.y + node.box.h / 2}" r="${Math.min(node.box.w, node.box.h) / 2}"/>`
+          : `<rect x="${node.box.x}" y="${node.box.y}" width="${node.box.w}" height="${node.box.h}" rx="${radius}" ry="${radius}"/>`;
+
+        const cx = node.box.x + node.box.w / 2;
+        const headR = Math.min(node.box.w, node.box.h) * 0.22;
+        const headCy = node.box.y + node.box.h * 0.38;
+        const shoulderTopY = node.box.y + node.box.h * 0.68;
+        const bottomY = node.box.y + node.box.h + 0.1;
+        const leftX = node.box.x + node.box.w * 0.12;
+        const rightX = node.box.x + node.box.w * 0.88;
+        const shoulderPath = `M ${leftX} ${bottomY} C ${leftX} ${shoulderTopY}, ${rightX} ${shoulderTopY}, ${rightX} ${bottomY} Z`;
+
+        return `<g id="${node.id}"><clipPath id="${clipId}">${clipShape}</clipPath><g clip-path="url(#${clipId})"><rect x="${node.box.x}" y="${node.box.y}" width="${node.box.w}" height="${node.box.h}" fill="${node.fill}"/><circle cx="${cx}" cy="${headCy}" r="${headR}" fill="#94A3B8"/><path d="${shoulderPath}" fill="#94A3B8"/></g></g>`;
+      }
+
+      if (node.photoMode === "initials") {
+        const radiusAttr = node.radius ? ` rx="${node.radius}" ry="${node.radius}"` : "";
+        const bgRect = `<rect x="${node.box.x}" y="${node.box.y}" width="${node.box.w}" height="${node.box.h}" fill="${node.fill}"${radiusAttr}/>`;
+
+        const initSizeMm = Math.min(node.box.w, node.box.h) * 0.36;
+        const initWidth = fontObj ? measure(node.initials || "?", initSizeMm, fontObj) : 0;
+        const initX = node.box.x + (node.box.w - initWidth) / 2;
+        const initY = node.box.y + (node.box.h - initSizeMm) / 2 + initSizeMm * 0.82;
+        const initPath = fontObj ? textToPathData(node.initials || "?", initX, initY, initSizeMm, fontObj) : "";
+        const textOutline = initPath ? `<path d="${initPath}" fill="#475569"/>` : "";
+
+        return `<g id="${node.id}">${bgRect}${textOutline}</g>`;
+      }
+
       const radiusAttr = node.radius ? ` rx="${node.radius}" ry="${node.radius}"` : "";
-      return `<rect id="${node.id}" x="${node.box.x}" y="${node.box.y}" width="${node.box.w}" height="${node.box.h}" fill="${node.fill}"${radiusAttr}/>`;
+      const strokeAttr = node.stroke ? ` stroke="${node.stroke}" stroke-width="${node.strokeWidth || 0.6}"` : "";
+      return `<rect id="${node.id}" x="${node.box.x}" y="${node.box.y}" width="${node.box.w}" height="${node.box.h}" fill="${node.fill}"${radiusAttr}${strokeAttr}/>`;
     }
     if (node.type === "image") {
+      if (node.clip === "circle") {
+        const clipId = `clip-${node.id}`;
+        const cx = (node.box.x + node.box.w / 2).toFixed(3);
+        const cy = (node.box.y + node.box.h / 2).toFixed(3);
+        const r = (Math.min(node.box.w, node.box.h) / 2).toFixed(3);
+        return `<g id="${node.id}"><clipPath id="${clipId}"><circle cx="${cx}" cy="${cy}" r="${r}"/></clipPath><image clip-path="url(#${clipId})" x="${node.box.x}" y="${node.box.y}" width="${node.box.w}" height="${node.box.h}" href="${escapeXml(node.href)}"/></g>`;
+      }
+      if (node.clip === "rounded") {
+        const clipId = `clip-${node.id}`;
+        const rx = 3;
+        return `<g id="${node.id}"><clipPath id="${clipId}"><rect x="${node.box.x}" y="${node.box.y}" width="${node.box.w}" height="${node.box.h}" rx="${rx}" ry="${rx}"/></clipPath><image clip-path="url(#${clipId})" x="${node.box.x}" y="${node.box.y}" width="${node.box.w}" height="${node.box.h}" href="${escapeXml(node.href)}"/></g>`;
+      }
       return `<image id="${node.id}" x="${node.box.x}" y="${node.box.y}" width="${node.box.w}" height="${node.box.h}" href="${escapeXml(node.href)}"/>`;
     }
     if (node.type === "text") {
-      let x = node.box.x;
-      if (node.anchor === "middle") {
-        x = node.box.x + node.box.w / 2;
-      } else if (node.anchor === "end") {
-        x = node.box.x + node.box.w;
-      }
+      const isHeading = node.fontRole === "heading" || node.bind === "person.name" || node.id === "name";
+      const font = (isHeading ? fontObj : bodyFontObj) || fontObj;
 
-      if (node.lines.length === 1) {
-        const y = node.box.y + (node.box.h - node.sizeMm) / 2 + node.sizeMm * 0.85;
-        return `<text id="${node.id}" x="${x}" y="${y}" fill="${node.fill}" font-family="${escapeXml(node.font)}" font-size="${node.sizeMm}" text-anchor="${node.anchor}">${escapeXml(node.lines[0])}</text>`;
-      }
-
+      const pathDataList = [];
       const lineHeightMm = node.sizeMm * LINE_HEIGHT;
       const totalHeight = (node.lines.length - 1) * lineHeightMm + node.sizeMm;
       const startY = node.box.y + (node.box.h - totalHeight) / 2 + node.sizeMm * 0.85;
-      const tspans = node.lines
-        .map((line, idx) => {
-          const dy = idx === 0 ? 0 : lineHeightMm;
-          return `<tspan x="${x}" dy="${dy}">${escapeXml(line)}</tspan>`;
-        })
-        .join("");
-      return `<text id="${node.id}" x="${x}" y="${startY}" fill="${node.fill}" font-family="${escapeXml(node.font)}" font-size="${node.sizeMm}" text-anchor="${node.anchor}">${tspans}</text>`;
+
+      for (let i = 0; i < node.lines.length; i++) {
+        const line = node.lines[i];
+        const lineWidth = font ? measure(line, node.sizeMm, font) : 0;
+        let lineX = node.box.x;
+        if (node.anchor === "middle") {
+          lineX = node.box.x + (node.box.w - lineWidth) / 2;
+        } else if (node.anchor === "end") {
+          lineX = node.box.x + node.box.w - lineWidth;
+        }
+        const lineY = startY + i * lineHeightMm;
+        const pData = font ? textToPathData(line, lineX, lineY, node.sizeMm, font) : "";
+        if (pData) {
+          pathDataList.push(pData);
+        }
+      }
+
+      const combinedPath = pathDataList.join(" ");
+      const ariaLabel = escapeXml(node.lines.join(" "));
+      const pathTag = combinedPath ? `<path d="${combinedPath}" fill="${node.fill}"/>` : "";
+      return `<g id="${node.id}" aria-label="${ariaLabel}">${pathTag}</g>`;
+    }
+    if (node.type === "path") {
+      return `<path id="${node.id}" d="${node.d}" fill="${node.fill}"/>`;
     }
     return "";
   });

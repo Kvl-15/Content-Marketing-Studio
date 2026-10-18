@@ -160,8 +160,23 @@ export function deriveTheme(palette, mode, strategy = "event-led", themeId = "de
 
   switch (mode) {
     case "dark": {
-      background = "#0F172A";
-      text = "#F8FAFC";
+      // Find the darkest colour in safePalette or darken primary keeping hue and saturation
+      let baseDark = safePalette[0];
+      let minLum = relativeLuminance(baseDark);
+      for (const col of safePalette) {
+        const lum = relativeLuminance(col);
+        if (lum < minLum) {
+          minLum = lum;
+          baseDark = col;
+        }
+      }
+      const [dr, dg, db] = hexToRgb(baseDark);
+      const [dh, ds, dl] = rgbToHsl(dr, dg, db);
+      // Keep hue and saturation, clamp L to 0.10 - 0.14 range
+      const targetL = Math.max(0.08, Math.min(0.14, dl > 0.14 ? 0.11 : Math.max(0.08, dl)));
+      const [bgR, bgG, bgB] = hslToRgb(dh, Math.min(ds, 0.60), targetL);
+      background = rgbToHex(bgR, bgG, bgB);
+      text = ensureContrast("#F8FAFC", background, 4.5);
       accent = ensureContrast(primary, background, 3.5);
       break;
     }

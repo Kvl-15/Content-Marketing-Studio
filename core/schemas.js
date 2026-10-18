@@ -214,6 +214,8 @@ export const RectBlockElement = z.object({
   box:    BoxTuple,
   fill:   z.string(),
   radius: z.number().min(0).optional(),
+  stroke: z.string().optional(),
+  strokeWidth: z.number().positive().optional(),
   decor:  z.boolean().optional(),
   optional: z.boolean().optional(),
 });
@@ -226,8 +228,18 @@ export const ImageBlockElement = z.object({
   src:    z.string(),
   fit:    z.enum(["contain", "cover"]).optional(),
   anchor: z.enum(["left", "right", "center"]).optional(),
+  clip:   z.enum(["circle", "rounded", "square"]).optional(),
   decor:  z.boolean().optional(),
   optional: z.boolean().optional(),
+  plate:  z.union([
+    z.object({
+      fill: z.string().optional(),
+      radiusMm: z.number().optional(),
+      paddingMm: z.number().optional(),
+    }),
+    z.literal("auto"),
+    z.literal("shared"),
+  ]).optional(),
 });
 
 /**
@@ -318,6 +330,7 @@ export const Look = z.object({
     mode:       z.enum(["light", "dark", "colour-field"]).optional(),
     strategy:   z.enum(["event-led", "role-led"]).optional(),
     typography: z.string().optional(),
+    archetype:  z.string().optional(),
   }),
   tags: z.array(z.string()),
   requires: z.object({
@@ -325,6 +338,7 @@ export const Look = z.object({
     maxRoles:       z.number().int().positive(),
     needsPhotoSlot: z.boolean(),
   }),
+  seed: z.union([z.string(), z.number()]).optional(),
 });
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -338,6 +352,11 @@ export const RectNode = z.object({
   box:    Box,
   fill:   z.string(),
   radius: z.number().min(0).optional(),
+  stroke: z.string().optional(),
+  strokeWidth: z.number().positive().optional(),
+  clip:   z.enum(["circle", "rounded", "square"]).optional(),
+  photoMode: z.enum(["silhouette", "initials"]).optional(),
+  initials: z.string().optional(),
   decor:  z.boolean().optional(),
   optional: z.boolean().optional(),
 });
@@ -351,6 +370,15 @@ export const ImageNode = z.object({
   srcW:  z.number().positive(),
   srcH:  z.number().positive(),
   clip:  z.enum(["circle", "rounded"]).optional(),
+  plate: z.union([
+    z.object({
+      fill: z.string().optional(),
+      radiusMm: z.number().optional(),
+      paddingMm: z.number().optional(),
+    }),
+    z.literal("auto"),
+    z.literal("shared"),
+  ]).optional(),
   decor: z.boolean().optional(),
   optional: z.boolean().optional(),
 });
@@ -363,6 +391,7 @@ export const TextNode = z.object({
   lines:  z.array(z.string()),
   sizeMm: z.number().positive(),
   font:   z.string(),
+  fontRole: z.enum(["heading", "body"]).optional(),
   fill:   z.string(),
   anchor: z.enum(["start", "middle", "end"]),
   status: z.enum(["ok", "truncated"]),
@@ -398,6 +427,7 @@ export const SceneNode = z.discriminatedUnion("type", [
 export const IssueCode = z.enum([
   "TEXT_TRUNCATED",
   "TEXT_OVERFLOW",
+  "TEXT_UNSUPPORTED_GLYPH",
   "OVERLAP",
   "LOGO_DISTORTED",
   "LOGO_CLEARSPACE",
@@ -410,6 +440,7 @@ export const IssueCode = z.enum([
   "UNCONFIRMED_VALUE",
   "PHOTO_LOW_RES",
   "NO_PHOTO",
+  "EVENT_NAME_DOES_NOT_FIT",
 ]);
 
 /**

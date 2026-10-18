@@ -15,7 +15,8 @@
       "src": "$brand.logo.primary",
       "box": [16.67, 8, 66.67, 16],
       "fit": "contain",
-      "anchor": "center"
+      "anchor": "center",
+      "plate": "auto"
     },
     {
       "id": "logo2",
@@ -23,7 +24,8 @@
       "src": "$brand.logo.secondary",
       "box": [16.67, 72, 66.67, 16],
       "fit": "contain",
-      "anchor": "center"
+      "anchor": "center",
+      "plate": "auto"
     }
   ]
 }

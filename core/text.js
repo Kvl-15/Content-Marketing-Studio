@@ -5,7 +5,47 @@
  * Pure functions: no filesystem, database, or network I/O (D-06).
  */
 
+import opentype from "opentype.js";
+
 export const PT_TO_MM = 0.3528;
+
+/**
+ * Converts a text line into SVG path data with 3 decimals using opentype.js.
+ * Uses manual glyph iteration to handle variable fonts and GSUB substitutions cleanly.
+ *
+ * @param {string} text
+ * @param {number} x
+ * @param {number} y
+ * @param {number} sizeMm
+ * @param {import("opentype.js").Font} font
+ * @returns {string}
+ */
+export function textToPathData(text, x, y, sizeMm, font) {
+  if (!text || !font || typeof font.charToGlyph !== "function") return "";
+  try {
+    const scale = (1 / (font.unitsPerEm || 1000)) * sizeMm;
+    const path = new opentype.Path();
+    let curX = x;
+    for (let i = 0; i < text.length; i++) {
+      const glyph = font.charToGlyph(text[i]);
+      if (glyph && typeof glyph.getPath === "function") {
+        const gPath = glyph.getPath(curX, y, sizeMm);
+        if (gPath && Array.isArray(gPath.commands)) {
+          path.commands.push(...gPath.commands);
+        }
+        curX += (glyph.advanceWidth || 0) * scale;
+        if (i > 0 && typeof font.getKerningValue === "function") {
+          const prevGlyph = font.charToGlyph(text[i - 1]);
+          const kerning = font.getKerningValue(prevGlyph, glyph);
+          curX += (kerning || 0) * scale;
+        }
+      }
+    }
+    return path.toPathData(3);
+  } catch (_e) {
+    return "";
+  }
+}
 
 /**
  * Measures the width of a string in millimeters using an opentype font.
