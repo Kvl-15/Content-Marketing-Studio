@@ -19,7 +19,7 @@
 - Task 3: First real vertical slice of renderCard (16 October 2026)
   - Files: `core/templateData.js`, `core/render.js`, `core/renderCard.test.js`, `scripts/preview-card.js`.
   - Implemented template data for portrait skeleton, blocks, theme, and look.bold.
-  - Rendered scene nodes and SVG with role resolution, XML escaping, and logo/photo placeholders.
+  - Rendered scene nodes   and SVG with role resolution, XML escaping, and logo/photo placeholders.
   - 6 unit tests passed in `core/renderCard.test.js`.
 - Task 4: Text measuring, wrapping and fitting (17 October 2026)
   - Files: `core/text.js`, `core/render.js`, `core/schemas.js`, `core/templateData.js`, `core/index.js`, `core/text.test.js`, `core/renderCard.test.js`, `scripts/preview-card.js`.
