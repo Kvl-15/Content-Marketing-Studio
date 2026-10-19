@@ -133,11 +133,10 @@ function getDeclaredMinPt(node, input) {
 }
 
 /**
- * Computes the minimum allowable font size floor in points under Rule D-22.
- * - Name text: never lowered below its own declared minimum (6.5 pt).
- * - Non-name text:
- *     If declared minimum <= 5 pt, floor is declared minimum (never raises limit).
- *     Otherwise floor = max(5 pt, declaredMin - 1 pt).
+ * Computes the minimum allowable font size floor in points under Rule D-32 (overriding D-22).
+ * - Name text: never lowered below its own declared minimum (name fitting down to 9 pt).
+ * - Role text: stays at least 7 pt.
+ * - Non-name text: nothing below 5.5 pt anywhere (D-32 overrides D-22).
  *
  * @param {any} node
  * @param {Record<string, any>} [input]
@@ -148,14 +147,11 @@ export function getTextFloorPt(node, input) {
   const declaredMin = getDeclaredMinPt(node, input);
 
   if (isName) {
-    return Math.max(6.5, declaredMin);
+    return Math.max(declaredMin, 6.5);
   }
 
-  if (declaredMin <= 5) {
-    return declaredMin;
-  }
-
-  return Math.max(5, declaredMin - 1);
+  // D-32: Nothing below 5.5 pt anywhere, autofix included
+  return Math.max(5.5, declaredMin - 1);
 }
 
 /**

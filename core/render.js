@@ -240,13 +240,59 @@ export function renderCard(input) {
     },
   };
 
+  const qrEnabled = event?.qr?.enabled ?? event?.event?.qr?.enabled ?? true;
+
   // Iterate over slots defined in skeleton
   for (const [slotName, slotBox] of Object.entries(skeleton.slots)) {
     const blockId = look?.blocks?.[slotName];
     const block = (blockId && blocks[blockId]) || (blockId && fallbackBlocks[blockId]) || defaultBlocks[blockId];
     if (!block || !Array.isArray(block.elements)) continue;
 
-    for (const el of block.elements) {
+    let elements = block.elements;
+    // When QR is disabled in the spec: no QR element and no warning
+    if (!qrEnabled) {
+      elements = elements.filter((e) => e.id !== "qr-box" && e.id !== "qr-label" && e.bind !== "qr");
+    }
+
+    // Dynamic drop handling for bottom stack when space is constrained (drop order: QR -> org -> id-line)
+    if (slotName === "info" || slotName === "meta") {
+      const hasQr = elements.some((e) => e.id === "qr-box" || e.bind === "qr" || e.id === "qr-label");
+      const hasOrg = elements.some((e) => e.id === "org" || e.bind === "person.org" || e.bind === "org");
+      const hasId = elements.some((e) => e.id === "id-line" || e.bind === "person.id" || e.bind === "id");
+
+      const availableH = slotBox[3];
+      if (hasQr && availableH < 21.0) {
+        elements = elements.filter((e) => e.id !== "qr-box" && e.id !== "qr-label" && e.bind !== "qr");
+        if (qrEnabled) {
+          preflightIssues.push({
+            code: "ELEMENT_DROPPED",
+            severity: "warning",
+            nodeId: "qr",
+            message: `Element 'qr' dropped on card for person '${person.id || person.name || "unknown"}' to maintain >= 2 mm spacing floor`,
+          });
+        }
+      }
+      if (hasOrg && availableH < 17.0) {
+        elements = elements.filter((e) => e.id !== "org" && e.bind !== "person.org" && e.bind !== "org");
+        preflightIssues.push({
+          code: "ELEMENT_DROPPED",
+          severity: "warning",
+          nodeId: "org",
+          message: `Element 'org' dropped on card for person '${person.id || person.name || "unknown"}' to maintain >= 2 mm spacing floor`,
+        });
+      }
+      if (hasId && availableH < 13.0) {
+        elements = elements.filter((e) => e.id !== "id-line" && e.bind !== "person.id" && e.bind !== "id");
+        preflightIssues.push({
+          code: "ELEMENT_DROPPED",
+          severity: "warning",
+          nodeId: "id-line",
+          message: `Element 'id-line' dropped on card for person '${person.id || person.name || "unknown"}' to maintain >= 2 mm spacing floor`,
+        });
+      }
+    }
+
+    for (const el of elements) {
       const box = toAbsolute(el.box, slotBox);
 
       if (el.type === "rect") {

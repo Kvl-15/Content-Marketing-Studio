@@ -164,6 +164,28 @@ export function sampleModeForPalette(prng, palette, requestedMode) {
 }
 
 /**
+ * Checks if a color is neutral (white, near-black, or grey).
+ * White, near-black, and greys must not count toward palette score (P0-1c Condition 1).
+ *
+ * @param {string} hex
+ * @returns {boolean}
+ */
+export function isNeutral(hex) {
+  if (!hex || typeof hex !== "string") return true;
+  const clean = hex.startsWith("#") ? hex : `#${hex}`;
+  if (clean.length !== 7) return true;
+  const [r, g, b] = hexToRgb(clean);
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const spread = max - min;
+  const [, s, l] = rgbToHsl(r, g, b);
+  if (l >= 0.90) return true; // white / near-white
+  if (max <= 42 && spread <= 25) return true; // near-black (e.g. #111827, #000000)
+  if (spread <= 25 || s <= 0.12) return true; // greys
+  return false;
+}
+
+/**
  * Measures layout quality across 4 objective, measurable dimensions (0-100 total score).
  *
  * Dimensions:
@@ -237,7 +259,9 @@ export function scoreQuality(scene, context = {}) {
     whitespaceScore = 2; // Under 18% is too cramped
   }
 
-  // 3. Visible Usage of Event Palette Colours
+  // 3. Visible Usage of Event Palette Colours (P0-1c Condition 1)
+  // Count ONLY colours derived from event palette (accent/primary fills, and background on dark and colour-field cards).
+  // White, near-black, and greys must not count.
   const rawPalette =
     context?.palette ||
     context?.event?.event?.palette ||
@@ -245,24 +269,40 @@ export function scoreQuality(scene, context = {}) {
     [];
   const palette = Array.isArray(rawPalette) ? rawPalette.map((c) => String(c).toUpperCase()) : [];
 
+  const eligiblePaletteTones = new Set();
+  for (const c of palette) {
+    if (!isNeutral(c)) eligiblePaletteTones.add(c);
+  }
+
+  if (context?.theme?.colors?.accent) {
+    const acc = String(context.theme.colors.accent).toUpperCase();
+    if (!isNeutral(acc)) eligiblePaletteTones.add(acc);
+  }
+
+  const mode = context?.mode || context?.theme?.mode || context?.look?.attributes?.mode;
+  const isDarkOrColourField = mode === "dark" || mode === "colour-field";
+  if (isDarkOrColourField && context?.theme?.colors?.background) {
+    const bg = String(context.theme.colors.background).toUpperCase();
+    if (!isNeutral(bg)) eligiblePaletteTones.add(bg);
+  }
+
   let paletteColorsUsed = 0;
-  if (palette.length > 0) {
-    const sceneFills = new Set();
+  if (eligiblePaletteTones.size > 0) {
+    const seenFills = new Set();
     for (const node of scene) {
-      if (node.id === "bg" && (node.fill === "#FFFFFF" || node.fill === "#0F172A")) continue;
-      if (node.fill && typeof node.fill === "string") {
-        sceneFills.add(node.fill.toUpperCase());
-      }
-    }
-    for (const pColor of palette) {
-      if (sceneFills.has(pColor)) {
+      if (!node.fill || typeof node.fill !== "string") continue;
+      const fill = node.fill.toUpperCase();
+      if (isNeutral(fill)) continue;
+      if (node.id === "bg" && !isDarkOrColourField) continue;
+      if (eligiblePaletteTones.has(fill) && !seenFills.has(fill)) {
+        seenFills.add(fill);
         paletteColorsUsed++;
       }
     }
   }
 
   let paletteScore = 0;
-  if (palette.length === 0) paletteScore = 20;
+  if (eligiblePaletteTones.size === 0) paletteScore = 20;
   else if (paletteColorsUsed >= 2) paletteScore = 25;
   else if (paletteColorsUsed === 1) paletteScore = 18;
   else paletteScore = 0;
@@ -297,7 +337,7 @@ export function scoreQuality(scene, context = {}) {
   else alignmentScore = 0;
 
   let total = ratioScore + whitespaceScore + paletteScore + alignmentScore;
-  if (paletteScore === 0 && palette.length > 0) {
+  if (paletteScore === 0 && (palette.length > 0 || eligiblePaletteTones.size > 0)) {
     total = Math.min(60, total);
   }
 
@@ -329,7 +369,7 @@ function generateHeroPhotoTop(event, prng, lookId, palette, requestedMode) {
   const photoClip = prng.choice(["rounded", "square"]);
   const headerStyle = prng.choice(["solid", "minimal", "none"]);
   const align = prng.choice(["left", "center"]);
-  const photoH = prng.int(34, 38);
+  const photoH = prng.int(34, 35);
   const typePairKey = prng.choice(["space-grotesk", "source-serif"]);
   const typePair = FONT_PAIRINGS[typePairKey];
 
@@ -338,13 +378,14 @@ function generateHeroPhotoTop(event, prng, lookId, palette, requestedMode) {
   const roleColor = getRoleColor("participant", event);
 
   const skeletonId = `skel.${lookId}`;
+  const infoH = 80.2 - (22 + photoH);
   const skeleton = {
     id: skeletonId,
     size: { w: 54, h: 85.6 },
     slots: {
       header: [0, 0, 54, 20],
       photo: [3, 21, 48, photoH],
-      info: [3, 22 + photoH, 48, 81.8 - (22 + photoH)],
+      info: [3, 22 + photoH, 48, infoH],
       roleMarker: [0, 82.2, 54, 3.4],
     },
     supports: {
@@ -394,9 +435,9 @@ function generateHeroPhotoTop(event, prng, lookId, palette, requestedMode) {
           type: "text",
           bind: "person.name",
           font: "heading",
-          box: [2, 0, 96, 40],
-          size: [15.5, 9.5],
-          oneLineFloor: 10.5,
+          box: [2, 0, 96, (8.6 / infoH) * 100],
+          size: [15, 9],
+          oneLineFloor: 10,
           maxLines: 2,
           align,
           fill: "$theme.colors.text",
@@ -406,8 +447,8 @@ function generateHeroPhotoTop(event, prng, lookId, palette, requestedMode) {
           type: "text",
           bind: "person.org",
           font: "body",
-          box: [2, 42, 96, 16],
-          size: [7, 5.5],
+          box: [2, (10.6 / infoH) * 100, 96, (2.2 / infoH) * 100],
+          size: [6, 5.5],
           maxLines: 1,
           align,
           fill: "$theme.colors.text",
@@ -416,7 +457,7 @@ function generateHeroPhotoTop(event, prng, lookId, palette, requestedMode) {
         {
           id: "role-pill",
           type: "rect",
-          box: align === "center" ? [16, 60, 68, 22] : [2, 60, 64, 22],
+          box: align === "center" ? [16, (14.8 / infoH) * 100, 68, (4.2 / infoH) * 100] : [2, (14.8 / infoH) * 100, 64, (4.2 / infoH) * 100],
           fill: "$role.color",
           radius: 2.5,
           decor: true,
@@ -426,7 +467,7 @@ function generateHeroPhotoTop(event, prng, lookId, palette, requestedMode) {
           type: "text",
           bind: "role.label",
           font: "body",
-          box: align === "center" ? [16, 60, 68, 22] : [2, 60, 64, 22],
+          box: align === "center" ? [16, (14.8 / infoH) * 100, 68, (4.2 / infoH) * 100] : [2, (14.8 / infoH) * 100, 64, (4.2 / infoH) * 100],
           size: [7.5, 7],
           maxLines: 1,
           align: "center",
@@ -437,8 +478,8 @@ function generateHeroPhotoTop(event, prng, lookId, palette, requestedMode) {
           type: "text",
           bind: "person.id",
           font: "body",
-          box: align === "center" ? [2, 84, 96, 14] : [2, 84, 66, 14],
-          size: [5.5, 5],
+          box: align === "center" ? [2, (21.0 / infoH) * 100, 96, (2.0 / infoH) * 100] : [2, (21.0 / infoH) * 100, 66, (2.0 / infoH) * 100],
+          size: [5.5, 5.5],
           maxLines: 1,
           align,
           fill: "$theme.colors.text",
@@ -447,7 +488,7 @@ function generateHeroPhotoTop(event, prng, lookId, palette, requestedMode) {
         {
           id: "qr-box",
           type: "rect",
-          box: [78, 62, 20, 36],
+          box: [76, (14.8 / infoH) * 100, 22, (8.2 / infoH) * 100],
           fill: "#F8FAFC",
           stroke: "#94A3B8",
           strokeWidth: 0.4,
@@ -461,7 +502,7 @@ function generateHeroPhotoTop(event, prng, lookId, palette, requestedMode) {
           bind: "qr",
           font: "body",
           maxLines: 1,
-          box: [78, 62, 20, 36],
+          box: [76, (14.8 / infoH) * 100, 22, (8.2 / infoH) * 100],
           size: [6.5, 6],
           align: "center",
           fill: "#475569",
@@ -588,8 +629,8 @@ function generateColourBlockSplit(event, prng, lookId, palette, requestedMode) {
           type: "text",
           bind: "person.name",
           font: "heading",
-          box: [2, 0, 96, 40],
-          size: [15, 9.5],
+          box: [2, 0, 96, (8.6 / 32) * 100],
+          size: [15, 9],
           oneLineFloor: 10,
           maxLines: 2,
           align: "center",
@@ -600,8 +641,8 @@ function generateColourBlockSplit(event, prng, lookId, palette, requestedMode) {
           type: "text",
           bind: "person.org",
           font: "body",
-          box: [2, 42, 96, 16],
-          size: [7, 5.5],
+          box: [2, (10.6 / 32) * 100, 96, (2.2 / 32) * 100],
+          size: [6, 5.5],
           maxLines: 1,
           align: "center",
           fill: "$theme.colors.text",
@@ -610,7 +651,7 @@ function generateColourBlockSplit(event, prng, lookId, palette, requestedMode) {
         {
           id: "role-pill",
           type: "rect",
-          box: [12, 60, 76, 22],
+          box: [12, (14.8 / 32) * 100, 76, (4.2 / 32) * 100],
           fill: "$role.color",
           radius: 2.5,
           decor: true,
@@ -620,7 +661,7 @@ function generateColourBlockSplit(event, prng, lookId, palette, requestedMode) {
           type: "text",
           bind: "role.label",
           font: "body",
-          box: [12, 60, 76, 22],
+          box: [12, (14.8 / 32) * 100, 76, (4.2 / 32) * 100],
           size: [7.5, 7],
           maxLines: 1,
           align: "center",
@@ -631,8 +672,8 @@ function generateColourBlockSplit(event, prng, lookId, palette, requestedMode) {
           type: "text",
           bind: "person.id",
           font: "body",
-          box: [2, 84, 96, 14],
-          size: [5.5, 5],
+          box: [2, (21.0 / 32) * 100, 96, (2.0 / 32) * 100],
+          size: [5.5, 5.5],
           maxLines: 1,
           align: "center",
           fill: "$theme.colors.text",
@@ -641,7 +682,7 @@ function generateColourBlockSplit(event, prng, lookId, palette, requestedMode) {
         {
           id: "qr-box",
           type: "rect",
-          box: [78, 62, 20, 36],
+          box: [76, (14.8 / 32) * 100, 22, (8.2 / 32) * 100],
           fill: "#F8FAFC",
           stroke: "#94A3B8",
           strokeWidth: 0.4,
@@ -655,7 +696,7 @@ function generateColourBlockSplit(event, prng, lookId, palette, requestedMode) {
           bind: "qr",
           font: "body",
           maxLines: 1,
-          box: [78, 62, 20, 36],
+          box: [76, (14.8 / 32) * 100, 22, (8.2 / 32) * 100],
           size: [6.5, 6],
           align: "center",
           fill: "#475569",
@@ -714,13 +755,14 @@ function generateCircleBadgeCentre(event, prng, lookId, palette, requestedMode) 
   theme.fonts = { heading: typePair.heading, body: typePair.body };
 
   const skeletonId = `skel.${lookId}`;
+  const infoH = 80.2 - (22 + badgeSize);
   const skeleton = {
     id: skeletonId,
     size: { w: 54, h: 85.6 },
     slots: {
       header: [0, 0, 54, 20],
       photo: [badgeX, 21, badgeSize, badgeSize],
-      info: [3, 22 + badgeSize, 48, 81.8 - (22 + badgeSize)],
+      info: [3, 22 + badgeSize, 48, infoH],
       roleMarker: [0, 82.2, 54, 3.4],
     },
     supports: {
@@ -776,7 +818,7 @@ function generateCircleBadgeCentre(event, prng, lookId, palette, requestedMode) 
           type: "text",
           bind: "person.name",
           font: "heading",
-          box: [2, 0, 96, 40],
+          box: [2, 0, 96, (8.6 / infoH) * 100],
           size: [15, 9],
           oneLineFloor: 10,
           maxLines: 2,
@@ -788,8 +830,8 @@ function generateCircleBadgeCentre(event, prng, lookId, palette, requestedMode) 
           type: "text",
           bind: "person.org",
           font: "body",
-          box: [2, 42, 96, 16],
-          size: [7, 5.5],
+          box: [2, (10.6 / infoH) * 100, 96, (2.2 / infoH) * 100],
+          size: [6, 5.5],
           maxLines: 1,
           align: "center",
           fill: "$theme.colors.text",
@@ -798,7 +840,7 @@ function generateCircleBadgeCentre(event, prng, lookId, palette, requestedMode) 
         {
           id: "role-pill",
           type: "rect",
-          box: [14, 60, 72, 22],
+          box: [14, (14.8 / infoH) * 100, 72, (4.2 / infoH) * 100],
           fill: "$role.color",
           radius: 2.5,
           decor: true,
@@ -808,7 +850,7 @@ function generateCircleBadgeCentre(event, prng, lookId, palette, requestedMode) 
           type: "text",
           bind: "role.label",
           font: "body",
-          box: [14, 60, 72, 22],
+          box: [14, (14.8 / infoH) * 100, 72, (4.2 / infoH) * 100],
           size: [7.5, 7],
           maxLines: 1,
           align: "center",
@@ -819,8 +861,8 @@ function generateCircleBadgeCentre(event, prng, lookId, palette, requestedMode) 
           type: "text",
           bind: "person.id",
           font: "body",
-          box: [2, 84, 96, 14],
-          size: [5.5, 5],
+          box: [2, (21.0 / infoH) * 100, 96, (2.0 / infoH) * 100],
+          size: [5.5, 5.5],
           maxLines: 1,
           align: "center",
           fill: "$theme.colors.text",
@@ -829,7 +871,7 @@ function generateCircleBadgeCentre(event, prng, lookId, palette, requestedMode) 
         {
           id: "qr-box",
           type: "rect",
-          box: [78, 62, 20, 36],
+          box: [78, (14.8 / infoH) * 100, 20, (8.2 / infoH) * 100],
           fill: "#F8FAFC",
           stroke: "#94A3B8",
           strokeWidth: 0.4,
@@ -843,7 +885,7 @@ function generateCircleBadgeCentre(event, prng, lookId, palette, requestedMode) 
           bind: "qr",
           font: "body",
           maxLines: 1,
-          box: [78, 62, 20, 36],
+          box: [78, (14.8 / infoH) * 100, 20, (8.2 / infoH) * 100],
           size: [6.5, 6],
           align: "center",
           fill: "#475569",
@@ -959,9 +1001,9 @@ function generateTypographicNameFirst(event, prng, lookId, palette, requestedMod
           type: "text",
           bind: "person.name",
           font: "heading",
-          box: [0, 0, 100, 52],
-          size: [16, 10],
-          oneLineFloor: 10.5,
+          box: [0, 0, 100, (9.0 / 24) * 100],
+          size: [16, 9.5],
+          oneLineFloor: 10,
           maxLines: 2,
           align: "left",
           fill: "$theme.colors.text",
@@ -969,7 +1011,7 @@ function generateTypographicNameFirst(event, prng, lookId, palette, requestedMod
         {
           id: "role-pill",
           type: "rect",
-          box: [0, 58, 68, 38],
+          box: [0, (11.2 / 24) * 100, 68, (4.2 / 24) * 100],
           fill: "$role.color",
           radius: 2.5,
           decor: true,
@@ -979,7 +1021,7 @@ function generateTypographicNameFirst(event, prng, lookId, palette, requestedMod
           type: "text",
           bind: "role.label",
           font: "body",
-          box: [0, 58, 68, 38],
+          box: [0, (11.2 / 24) * 100, 68, (4.2 / 24) * 100],
           size: [7.5, 7],
           maxLines: 1,
           align: "center",
@@ -1003,7 +1045,7 @@ function generateTypographicNameFirst(event, prng, lookId, palette, requestedMod
           type: "text",
           bind: "person.org",
           font: "body",
-          box: [0, 2, 100, 26],
+          box: [0, 0, 100, (4.5 / 29) * 100],
           size: [7, 5.5],
           maxLines: 2,
           align: "left",
@@ -1015,8 +1057,8 @@ function generateTypographicNameFirst(event, prng, lookId, palette, requestedMod
           type: "text",
           bind: "person.id",
           font: "body",
-          box: [0, 32, 100, 20],
-          size: [5.5, 5],
+          box: [0, (6.5 / 29) * 100, 100, (2.2 / 29) * 100],
+          size: [5.5, 5.5],
           maxLines: 1,
           align: "left",
           fill: "$theme.colors.text",
@@ -1025,7 +1067,7 @@ function generateTypographicNameFirst(event, prng, lookId, palette, requestedMod
         {
           id: "qr-box",
           type: "rect",
-          box: [0, 56, 56, 42],
+          box: [0, (10.7 / 29) * 100, 56, (10.0 / 29) * 100],
           fill: "#F8FAFC",
           stroke: "#94A3B8",
           strokeWidth: 0.4,
@@ -1039,7 +1081,7 @@ function generateTypographicNameFirst(event, prng, lookId, palette, requestedMod
           bind: "qr",
           font: "body",
           maxLines: 1,
-          box: [0, 56, 56, 42],
+          box: [0, (10.7 / 29) * 100, 56, (10.0 / 29) * 100],
           size: [6.5, 6],
           align: "center",
           fill: "#475569",
@@ -1058,7 +1100,7 @@ function generateTypographicNameFirst(event, prng, lookId, palette, requestedMod
           bind: "event.venue",
           font: "body",
           box: [0, 0, 100, 100],
-          size: [6, 5],
+          size: [6, 5.5],
           maxLines: 1,
           align: "left",
           fill: "$theme.colors.text",
@@ -1239,7 +1281,8 @@ export function composeDrafts(event, options) {
   /** @type {any[]} */
   const candidates = [];
   /** @type {any[]} */
-  const collectedIssues = [];
+  const dataErrors = [];
+  const qrEnabled = event?.qr?.enabled ?? event?.event?.qr?.enabled ?? true;
 
   // Generate candidate pool cycling across all 4 archetypes and modes
   for (let i = 0; i < sampleSize; i++) {
@@ -1253,6 +1296,8 @@ export function composeDrafts(event, options) {
     let passesStress = true;
     let sampleScene = null;
     let sampleSvg = null;
+    /** @type {any[]} */
+    const candidateIssues = [];
 
     for (const person of dataset) {
       const res = renderCard({
@@ -1268,11 +1313,33 @@ export function composeDrafts(event, options) {
         look: candidate.look,
       });
 
+      // Collect issues for this candidate
+      for (const iss of res.issues || []) {
+        if (!candidateIssues.some((ci) => ci.code === iss.code && ci.message === iss.message && ci.nodeId === iss.nodeId)) {
+          candidateIssues.push(iss);
+        }
+      }
+
+      // Check if QR was hidden via the QR_TOO_SMALL autofix path
+      if (qrEnabled) {
+        const qrHiddenViaAutofix = (res.fixes || []).some(
+          (f) => f.code === "QR_TOO_SMALL" || (f.nodeId && f.nodeId.includes("qr"))
+        );
+        if (qrHiddenViaAutofix && !candidateIssues.some((ci) => ci.code === "ELEMENT_DROPPED" && ci.nodeId === "qr")) {
+          candidateIssues.push({
+            code: "ELEMENT_DROPPED",
+            severity: "warning",
+            nodeId: "qr",
+            message: `Element 'qr' dropped on card for person '${person.id || person.name || "unknown"}' (hidden via QR_TOO_SMALL autofix to satisfy minimum 15x15 mm)`,
+          });
+        }
+      }
+
       const errors = (res.issues || []).filter((iss) => iss.severity === "error");
       if (errors.length > 0) {
         for (const err of errors) {
-          if (!collectedIssues.some((ci) => ci.code === err.code && ci.message === err.message)) {
-            collectedIssues.push(err);
+          if (!dataErrors.some((de) => de.code === err.code && de.message === err.message)) {
+            dataErrors.push(err);
           }
         }
         // Only layout/design errors disqualify a candidate template from passing stress tests.
@@ -1294,7 +1361,7 @@ export function composeDrafts(event, options) {
     if (!passesStress) continue;
 
     // Quality score
-    const quality = scoreQuality(sampleScene, { card: event?.card, palette, event });
+    const quality = scoreQuality(sampleScene, { card: event?.card, palette, event, theme: candidate.theme, mode });
 
     candidates.push({
       ...candidate,
@@ -1303,11 +1370,38 @@ export function composeDrafts(event, options) {
       scene: sampleScene,
       svg: sampleSvg,
       fonts: candidateFonts,
+      issues: candidateIssues,
     });
   }
 
+  /**
+   * Assembles result.issues containing only the issues of the chosen drafts plus data errors (D-39 / Condition 2).
+   * Warnings from rejected candidates are excluded.
+   *
+   * @param {any[]} chosenDrafts
+   * @returns {any[]}
+   */
+  const assembleResultIssues = (chosenDrafts) => {
+    /** @type {any[]} */
+    const resultIssues = [];
+    const add = (iss) => {
+      if (!resultIssues.some((ri) => ri.code === iss.code && ri.message === iss.message && ri.nodeId === iss.nodeId)) {
+        resultIssues.push(iss);
+      }
+    };
+    for (const de of dataErrors) {
+      add(de);
+    }
+    for (const draft of chosenDrafts) {
+      for (const iss of draft.issues || []) {
+        add(iss);
+      }
+    }
+    return resultIssues;
+  };
+
   if (candidates.length < count) {
-    return { drafts: candidates, seed, issues: collectedIssues };
+    return { drafts: candidates, seed, issues: assembleResultIssues(candidates) };
   }
 
   if (count === 1) {
@@ -1317,7 +1411,8 @@ export function composeDrafts(event, options) {
       if (aUnseen !== bUnseen) return aUnseen ? -1 : 1;
       return b.score - a.score;
     });
-    return { drafts: sorted.slice(0, 1), seed, issues: collectedIssues };
+    const picked = sorted.slice(0, 1);
+    return { drafts: picked, seed, issues: assembleResultIssues(picked) };
   }
 
   if (count === 2) {
@@ -1334,7 +1429,8 @@ export function composeDrafts(event, options) {
         }
       }
     }
-    return { drafts: bestPair || candidates.slice(0, 2), seed, issues: collectedIssues };
+    const picked = bestPair || candidates.slice(0, 2);
+    return { drafts: picked, seed, issues: assembleResultIssues(picked) };
   }
 
   // Find candidate triplets satisfying distinctness rules
@@ -1406,7 +1502,7 @@ export function composeDrafts(event, options) {
 
   if (validTriplets.length === 0) {
     const top = candidates.sort((a, b) => b.score - a.score).slice(0, count);
-    return { drafts: top, seed, issues: collectedIssues };
+    return { drafts: top, seed, issues: assembleResultIssues(top) };
   }
 
   // Sort triplets:
@@ -1427,5 +1523,6 @@ export function composeDrafts(event, options) {
     return b.totalScore - a.totalScore;
   });
 
-  return { drafts: validTriplets[0].triplet, seed, issues: collectedIssues };
+  const picked = validTriplets[0].triplet;
+  return { drafts: picked, seed, issues: assembleResultIssues(picked) };
 }

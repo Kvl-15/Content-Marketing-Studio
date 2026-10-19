@@ -156,7 +156,7 @@ describe("Task 6: Autofix", () => {
 
     const result = autofix(input);
     const roleNode = result.scene.find((n) => n.id === "role");
-    expect(roleNode.sizeMm / PT_TO_MM).toBeGreaterThanOrEqual(5 - 0.01);
+    expect(roleNode.sizeMm / PT_TO_MM).toBeGreaterThanOrEqual(5.5 - 0.01);
     const errors = result.issues.filter((i) => i.severity === "error");
     expect(errors.length).toBe(0);
     expect(result.fixes.some((f) => f.code === "TEXT_OVERFLOW" && f.nodeId === "role")).toBe(true);
@@ -217,8 +217,8 @@ describe("Task 6: Autofix", () => {
     expect(errors.length).toBeGreaterThan(0);
   });
 
-  // 5. Test with declared minimum 4 pt proving the floor stays 4 pt
-  it("proves declared minimum 4 pt floor stays 4 pt and is never raised to 5 pt", () => {
+  // 5. Test under D-32 (overriding D-22) proving floor never goes below 5.5 pt
+  it("proves autofix floor under D-32 is never below 5.5 pt even if declared minimum is lower", () => {
     const node = {
       id: "detail",
       type: "text",
@@ -237,7 +237,42 @@ describe("Task 6: Autofix", () => {
     };
 
     const floor = getTextFloorPt(node, input);
-    expect(floor).toBe(4);
+    expect(floor).toBe(5.5);
+  });
+
+  it("Autofix never produces text under 5.5 pt with a 200-character role or org, an empty org, and a name with no spaces", () => {
+    const longRole = "A".repeat(200);
+    const longOrg = "B".repeat(200);
+    const noSpaceName = "SupercalifragilisticexpialidociousLlanfairpwllgwyngyll";
+
+    const scene = [
+      { type: "rect", id: "bg", box: { x: 0, y: 0, w: 54, h: 85.6 }, fill: "#FFFFFF", decor: true },
+      { type: "text", id: "name", bind: "person.name", box: { x: 5, y: 10, w: 44, h: 10 }, lines: [noSpaceName], sizeMm: 10 * PT_TO_MM, font: "sans-serif", fill: "#111827", status: "ok" },
+      { type: "text", id: "org", bind: "person.org", box: { x: 5, y: 22, w: 44, h: 6 }, lines: [longOrg], sizeMm: 7 * PT_TO_MM, font: "sans-serif", fill: "#111827", status: "ok" },
+      { type: "text", id: "role", bind: "role.label", box: { x: 5, y: 30, w: 44, h: 6 }, lines: [longRole], sizeMm: 7.5 * PT_TO_MM, font: "sans-serif", fill: "#111827", status: "ok" },
+    ];
+
+    const input = {
+      scene,
+      font: mockFont,
+      blocks: {
+        info: {
+          elements: [
+            { id: "name", type: "text", bind: "person.name", size: [15, 9], maxLines: 2, box: [0, 0, 100, 100] },
+            { id: "org", type: "text", bind: "person.org", size: [7, 5.5], maxLines: 1, box: [0, 0, 100, 100] },
+            { id: "role", type: "text", bind: "role.label", size: [7.5, 7], maxLines: 1, box: [0, 0, 100, 100] },
+          ],
+        },
+      },
+    };
+
+    const result = autofix(input);
+    for (const node of result.scene) {
+      if (node.type === "text" && typeof node.sizeMm === "number") {
+        const pt = node.sizeMm / PT_TO_MM;
+        expect(pt).toBeGreaterThanOrEqual(5.5 - 0.001);
+      }
+    }
   });
 
   // 6. Unfixable error (LOGO_MISSING or UNFILLED_DATA) stays an error and text content is unchanged

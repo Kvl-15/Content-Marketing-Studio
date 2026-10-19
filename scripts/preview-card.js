@@ -25,7 +25,7 @@ if (!availablePersons[personName]) {
   process.exit(1);
 }
 
-const fontPath = resolve(process.cwd(), "assets/fonts/Roboto-VariableFont_wdth,wght.ttf");
+const fontPath = resolve(process.cwd(), "assets/fonts/Inter-Regular.ttf");
 const fontBuf = readFileSync(fontPath);
 const font = opentype.parse(
   fontBuf.buffer.slice(fontBuf.byteOffset, fontBuf.byteOffset + fontBuf.byteLength)

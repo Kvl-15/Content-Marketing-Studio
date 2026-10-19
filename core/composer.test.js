@@ -832,6 +832,498 @@ describe("Spike C1 + C2: Dynamic Look Composition and Quality Scorer", () => {
     expect(roleIssues[0].message).toContain("P-BOSS");
     expect(roleIssues[0].message).toContain("boss");
   });
+
+  describe("Task P0-1: Design-Freeze Spacing, 5.5 pt Floor, Palette Tones, and Drop Order", () => {
+    const staticFontRegistry = {
+      "space-grotesk": {
+        heading: opentype.parse(readFileSync(resolve(process.cwd(), "assets/fonts/SpaceGrotesk-Bold.ttf")).buffer),
+        body: opentype.parse(readFileSync(resolve(process.cwd(), "assets/fonts/Inter-Regular.ttf")).buffer),
+      },
+      "source-serif": {
+        heading: opentype.parse(readFileSync(resolve(process.cwd(), "assets/fonts/SourceSerif4-Bold.ttf")).buffer),
+        body: opentype.parse(readFileSync(resolve(process.cwd(), "assets/fonts/SourceSans3-Regular.ttf")).buffer),
+      },
+    };
+
+    // 1. Property test: every archetype x mode x stress person x 5 seeds
+    it("property test: every archetype x mode x stress person x seeds has gap >= 2mm and text >= 5.5pt", () => {
+      const modes = ["light", "dark", "colour-field"];
+      for (let s = 1; s <= 5; s++) {
+        const seed = `p0-1-seed-${s}`;
+        for (const archetype of ARCHETYPES) {
+          for (const mode of modes) {
+            const bundle = compose(sampleEventSpec, seed, archetype, mode);
+            const fonts = staticFontRegistry[bundle.look.attributes.typography] || staticFontRegistry["space-grotesk"];
+            for (const person of stressSet) {
+              const res = renderCard({
+                person,
+                event: sampleEventSpec,
+                brand: sampleBrandKit,
+                card: sampleEventSpec.card,
+                fonts,
+                skeleton: bundle.skeleton,
+                blocks: bundle.blocks,
+                theme: bundle.theme,
+                look: bundle.look,
+              });
+
+              // Check text size floor
+              for (const node of res.scene) {
+                if (node.type === "text" && typeof node.sizeMm === "number") {
+                  const pt = node.sizeMm / 0.3528;
+                  expect(pt).toBeGreaterThanOrEqual(5.5 - 0.001);
+                }
+              }
+
+              // Check bottom stack gaps
+              const sceneBlocks = res.scene.filter((n) =>
+                ["name", "org", "role-pill", "id-line", "qr-box", "role-bar"].includes(n.id)
+              );
+              for (let i = 0; i < sceneBlocks.length; i++) {
+                for (let j = 0; j < sceneBlocks.length; j++) {
+                  if (i === j) continue;
+                  const a = sceneBlocks[i];
+                  const b = sceneBlocks[j];
+                  if (b.box.y < a.box.y) continue;
+                  // If horizontal overlap exists
+                  const xOverlap = Math.min(a.box.x + a.box.w, b.box.x + b.box.w) - Math.max(a.box.x, b.box.x);
+                  if (xOverlap > 0.5) {
+                    // Check if directly adjacent (no intermediate block c)
+                    const intermediate = sceneBlocks.some((c, k) =>
+                      k !== i && k !== j &&
+                      c.box.y > a.box.y && c.box.y < b.box.y &&
+                      (Math.min(a.box.x + a.box.w, c.box.x + c.box.w) - Math.max(a.box.x, c.box.x)) > 0.5
+                    );
+                    if (!intermediate) {
+                      const gap = b.box.y - (a.box.y + a.box.h);
+                      expect(gap).toBeGreaterThanOrEqual(2.0 - 0.001);
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }, 30000);
+
+    // 2. Drop order: QR first, then org, then ID line
+    it("drop order: drops QR first, then org, then ID line under constrained space; name and role are never dropped", () => {
+      const bundle = compose(sampleEventSpec, "test-drop-order", "hero-photo-top", "light");
+      const person = stressPersonLong57;
+
+      // Constrain info slot height to 20 mm (forces QR drop)
+      const constrained1 = {
+        ...bundle.skeleton,
+        slots: { ...bundle.skeleton.slots, info: [3, 60, 48, 20] },
+      };
+      const res1 = renderCard({
+        person,
+        event: sampleEventSpec,
+        brand: sampleBrandKit,
+        card: sampleEventSpec.card,
+        skeleton: constrained1,
+        blocks: bundle.blocks,
+        theme: bundle.theme,
+        look: bundle.look,
+      });
+
+      const qrDropped = res1.issues.find((i) => i.code === "ELEMENT_DROPPED" && i.nodeId === "qr");
+      expect(qrDropped).toBeDefined();
+      expect(qrDropped.message).toContain(person.id);
+      expect(res1.scene.find((n) => n.id === "qr-box")).toBeUndefined();
+      expect(res1.scene.find((n) => n.id === "name")).toBeDefined();
+      expect(res1.scene.find((n) => n.id === "role")).toBeDefined();
+
+      // Constrain info slot height to 16 mm (forces QR and org drop)
+      const constrained2 = {
+        ...bundle.skeleton,
+        slots: { ...bundle.skeleton.slots, info: [3, 60, 48, 16] },
+      };
+      const res2 = renderCard({
+        person,
+        event: sampleEventSpec,
+        brand: sampleBrandKit,
+        card: sampleEventSpec.card,
+        skeleton: constrained2,
+        blocks: bundle.blocks,
+        theme: bundle.theme,
+        look: bundle.look,
+      });
+
+      expect(res2.issues.find((i) => i.code === "ELEMENT_DROPPED" && i.nodeId === "qr")).toBeDefined();
+      expect(res2.issues.find((i) => i.code === "ELEMENT_DROPPED" && i.nodeId === "org")).toBeDefined();
+      expect(res2.scene.find((n) => n.id === "org")).toBeUndefined();
+      expect(res2.scene.find((n) => n.id === "name")).toBeDefined();
+      expect(res2.scene.find((n) => n.id === "role")).toBeDefined();
+
+      // Constrain info slot height to 12 mm (forces QR, org, and ID line drop)
+      const constrained3 = {
+        ...bundle.skeleton,
+        slots: { ...bundle.skeleton.slots, info: [3, 60, 48, 12] },
+      };
+      const res3 = renderCard({
+        person,
+        event: sampleEventSpec,
+        brand: sampleBrandKit,
+        card: sampleEventSpec.card,
+        skeleton: constrained3,
+        blocks: bundle.blocks,
+        theme: bundle.theme,
+        look: bundle.look,
+      });
+
+      expect(res3.issues.find((i) => i.code === "ELEMENT_DROPPED" && i.nodeId === "qr")).toBeDefined();
+      expect(res3.issues.find((i) => i.code === "ELEMENT_DROPPED" && i.nodeId === "org")).toBeDefined();
+      expect(res3.issues.find((i) => i.code === "ELEMENT_DROPPED" && i.nodeId === "id-line")).toBeDefined();
+      expect(res3.scene.find((n) => n.id === "name")).toBeDefined();
+      expect(res3.scene.find((n) => n.id === "role")).toBeDefined();
+    });
+
+    // 3. QR disabled in spec: no QR and no warning
+    it("QR disabled in spec: no QR and no warning", () => {
+      const disabledQrSpec = {
+        ...sampleEventSpec,
+        qr: { enabled: false, urlPattern: "https://example.org" },
+      };
+      const bundle = compose(disabledQrSpec, "qr-disabled-seed", "hero-photo-top");
+      const res = renderCard({
+        person: personNormal,
+        event: disabledQrSpec,
+        brand: sampleBrandKit,
+        card: disabledQrSpec.card,
+        skeleton: bundle.skeleton,
+        blocks: bundle.blocks,
+        theme: bundle.theme,
+        look: bundle.look,
+      });
+
+      expect(res.scene.find((n) => n.id === "qr-box")).toBeUndefined();
+      expect(res.scene.find((n) => n.id === "qr-label")).toBeUndefined();
+      const dropWarnings = res.issues.filter((i) => i.code === "ELEMENT_DROPPED");
+      expect(dropWarnings).toHaveLength(0);
+    });
+
+    // 4. Dark card palette score is comparable to light card
+    it("dark card palette score is greater than 0 and equal to equivalent light card", () => {
+      const eventWithPalette = {
+        ...sampleEventSpec,
+        event: { ...sampleEventSpec.event, palette: ["#1E3A8A", "#06B6D4"] },
+      };
+      const lightBundle = compose(eventWithPalette, "pal-test", "colour-block-split", "light");
+      const darkBundle = compose(eventWithPalette, "pal-test", "colour-block-split", "dark");
+
+      const lightRes = renderCard({
+        person: personNormal,
+        event: eventWithPalette,
+        brand: sampleBrandKit,
+        card: eventWithPalette.card,
+        skeleton: lightBundle.skeleton,
+        blocks: lightBundle.blocks,
+        theme: lightBundle.theme,
+        look: lightBundle.look,
+      });
+
+      const darkRes = renderCard({
+        person: personNormal,
+        event: eventWithPalette,
+        brand: sampleBrandKit,
+        card: eventWithPalette.card,
+        skeleton: darkBundle.skeleton,
+        blocks: darkBundle.blocks,
+        theme: darkBundle.theme,
+        look: darkBundle.look,
+      });
+
+      const lightScore = scoreQuality(lightRes.scene, {
+        card: eventWithPalette.card,
+        event: eventWithPalette,
+        theme: lightBundle.theme,
+        palette: eventWithPalette.event.palette,
+      });
+
+      const darkScore = scoreQuality(darkRes.scene, {
+        card: eventWithPalette.card,
+        event: eventWithPalette,
+        theme: darkBundle.theme,
+        palette: eventWithPalette.event.palette,
+      });
+
+      expect(darkScore.breakdown.paletteScore).toBeGreaterThan(0);
+      expect(darkScore.breakdown.paletteScore).toBe(lightScore.breakdown.paletteScore);
+    });
+
+    // 5. Condition 3: role-pill and qr-box horizontal clash in circle-badge-centre
+    it("Condition 3: role-pill and qr-box horizontal clash is allowed in circle-badge-centre", () => {
+      const bundle = compose(sampleEventSpec, "clash-seed", "circle-badge-centre", "light");
+      const infoBlock = bundle.blocks[bundle.look.blocks.info];
+      const pillEl = infoBlock.elements.find((e) => e.id === "role-pill");
+      const qrEl = infoBlock.elements.find((e) => e.id === "qr-box");
+      expect(pillEl).toBeDefined();
+      expect(qrEl).toBeDefined();
+
+      // Check horizontal overlap in template layout
+      const pillRight = pillEl.box[0] + pillEl.box[2];
+      const qrLeft = qrEl.box[0];
+      const overlapPct = pillRight - qrLeft;
+      expect(overlapPct).toBeGreaterThan(0);
+      expect(pillRight).toBe(86);
+      expect(qrLeft).toBe(78);
+    });
+
+    // 6. Bad input tests: missing org, missing role, 120-char name, 60-char role, 1-char name
+    it("bad input tests: missing org, 120-char name, 60-char role label, one-letter name render safely", () => {
+      const bundle = compose(sampleEventSpec, "bad-input-seed", "hero-photo-top");
+
+      // Missing org
+      const noOrgPerson = { ...personNormal, org: "" };
+      const resNoOrg = renderCard({
+        person: noOrgPerson,
+        event: sampleEventSpec,
+        brand: sampleBrandKit,
+        card: sampleEventSpec.card,
+        skeleton: bundle.skeleton,
+        blocks: bundle.blocks,
+        theme: bundle.theme,
+        look: bundle.look,
+      });
+      expect(resNoOrg.scene.find((n) => n.id === "org")).toBeUndefined();
+      expect(resNoOrg.svg).toBeDefined();
+
+      // Missing role
+      const noRolePerson = { ...personNormal, roleId: undefined };
+      const resNoRole = renderCard({
+        person: noRolePerson,
+        event: sampleEventSpec,
+        brand: sampleBrandKit,
+        card: sampleEventSpec.card,
+        skeleton: bundle.skeleton,
+        blocks: bundle.blocks,
+        theme: bundle.theme,
+        look: bundle.look,
+      });
+      expect(resNoRole.issues.some((i) => i.code === "UNKNOWN_ROLE_ID")).toBe(true);
+
+      // 120-character name
+      const name120Person = { ...personNormal, name: "A".repeat(120) };
+      const resName120 = renderCard({
+        person: name120Person,
+        event: sampleEventSpec,
+        brand: sampleBrandKit,
+        card: sampleEventSpec.card,
+        skeleton: bundle.skeleton,
+        blocks: bundle.blocks,
+        theme: bundle.theme,
+        look: bundle.look,
+      });
+      const nameNode = resName120.scene.find((n) => n.id === "name");
+      expect(nameNode.sizeMm / 0.3528).toBeGreaterThanOrEqual(5.5 - 0.001);
+
+      // 60-character role label
+      const event60Role = {
+        ...sampleEventSpec,
+        roles: [{ id: "participant", label: "R".repeat(60), expectedCount: 100 }],
+      };
+      const resRole60 = renderCard({
+        person: personNormal,
+        event: event60Role,
+        brand: sampleBrandKit,
+        card: sampleEventSpec.card,
+        skeleton: bundle.skeleton,
+        blocks: bundle.blocks,
+        theme: bundle.theme,
+        look: bundle.look,
+      });
+      const roleTextNode = resRole60.scene.find((n) => n.id === "role");
+      expect(roleTextNode.sizeMm / 0.3528).toBeGreaterThanOrEqual(5.5 - 0.001);
+
+      // One-letter name
+      const name1Person = { ...personNormal, name: "Q" };
+      const resName1 = renderCard({
+        person: name1Person,
+        event: sampleEventSpec,
+        brand: sampleBrandKit,
+        card: sampleEventSpec.card,
+        skeleton: bundle.skeleton,
+        blocks: bundle.blocks,
+        theme: bundle.theme,
+        look: bundle.look,
+      });
+      expect(resName1.svg).toBeDefined();
+    });
+
+    // 7. Determinism: render twice byte-identical
+    it("determinism: render twice byte-identical", () => {
+      const bundle = compose(sampleEventSpec, "determ-seed-99", "colour-block-split");
+      const res1 = renderCard({
+        person: personNormal,
+        event: sampleEventSpec,
+        brand: sampleBrandKit,
+        card: sampleEventSpec.card,
+        skeleton: bundle.skeleton,
+        blocks: bundle.blocks,
+        theme: bundle.theme,
+        look: bundle.look,
+      });
+      const res2 = renderCard({
+        person: personNormal,
+        event: sampleEventSpec,
+        brand: sampleBrandKit,
+        card: sampleEventSpec.card,
+        skeleton: bundle.skeleton,
+        blocks: bundle.blocks,
+        theme: bundle.theme,
+        look: bundle.look,
+      });
+      expect(res1.svg).toBe(res2.svg);
+    });
+
+    // 8. Variable font ban test
+    it("variable font ban: themeDerivation and composer pairings use only static fonts", () => {
+      const theme = deriveTheme(["#112233"], "light");
+      expect(theme.fonts.heading).not.toContain("Variable");
+      expect(theme.fonts.body).not.toContain("Variable");
+      for (const pair of Object.values(FONT_PAIRINGS)) {
+        expect(pair.headingFile).not.toContain("Variable");
+        expect(pair.bodyFile).not.toContain("Variable");
+      }
+    });
+  });
+
+  // Task P0-1c: Palette Scoring, QR_TOO_SMALL ELEMENT_DROPPED, and Chosen Drafts Issues
+  describe("Task P0-1c: Palette Scoring and ComposeDrafts Issues", () => {
+    // Condition 1: Palette score drops below 25 when accent is replaced with grey
+    it("Condition 1: real composed card palette score drops below 25 when accent is replaced with grey", () => {
+      const bundle = compose(sampleEventSpec, "test-pal-seed-1", "colour-block-split", "dark");
+      const res = renderCard({
+        person: personNormal,
+        event: sampleEventSpec,
+        brand: sampleBrandKit,
+        card: sampleEventSpec.card,
+        skeleton: bundle.skeleton,
+        blocks: bundle.blocks,
+        theme: bundle.theme,
+        look: bundle.look,
+      });
+
+      const pal = sampleEventSpec?.event?.palette || ["#0A192F", "#FF6B35"];
+      const scoreOriginal = scoreQuality(res.scene, {
+        card: sampleEventSpec.card,
+        palette: pal,
+        theme: bundle.theme,
+        mode: "dark",
+      });
+      expect(scoreOriginal.breakdown.paletteScore).toBe(25);
+
+      // Clone scene and replace accent with grey (#888888)
+      const accentHex = bundle.theme.colors.accent.toUpperCase();
+      const sceneWithGreyAccent = res.scene.map((node) => {
+        if (node.fill && String(node.fill).toUpperCase() === accentHex) {
+          return { ...node, fill: "#888888" };
+        }
+        return node;
+      });
+
+      const scoreWithGrey = scoreQuality(sceneWithGreyAccent, {
+        card: sampleEventSpec.card,
+        palette: pal,
+        theme: bundle.theme,
+        mode: "dark",
+      });
+      // Accent is replaced with grey, so palette score must drop below 25
+      expect(scoreWithGrey.breakdown.paletteScore).toBeLessThan(25);
+      expect(scoreWithGrey.breakdown.paletteScore).toBe(18);
+
+      // Replace both background and accent with grey -> palette score drops to 0 and total capped at 60
+      const sceneAllGrey = res.scene.map((node) => ({
+        ...node,
+        fill: node.fill ? "#888888" : node.fill,
+      }));
+      const scoreAllGrey = scoreQuality(sceneAllGrey, {
+        card: sampleEventSpec.card,
+        palette: pal,
+        theme: bundle.theme,
+        mode: "dark",
+      });
+      expect(scoreAllGrey.breakdown.paletteScore).toBe(0);
+      expect(scoreAllGrey.total).toBeLessThanOrEqual(60);
+    });
+
+    // Condition 2: ELEMENT_DROPPED raised via QR_TOO_SMALL autofix path, appears in draft.issues and result.issues, absent when qr.enabled is false
+    it("Condition 2: ELEMENT_DROPPED raised when QR hidden via QR_TOO_SMALL autofix, present in draft.issues and result.issues with qr.enabled, absent when false", () => {
+      // (a) With qr.enabled: true
+      const eventWithQr = {
+        ...sampleEventSpec,
+        qr: { enabled: true },
+      };
+      const resultWithQr = composeDrafts(eventWithQr, {
+        seed: "test-qr-autofix-true",
+        count: 3,
+      });
+
+      expect(resultWithQr.drafts).toHaveLength(3);
+      // Each draft carries its own issues array containing ELEMENT_DROPPED
+      for (const draft of resultWithQr.drafts) {
+        expect(Array.isArray(draft.issues)).toBe(true);
+        const qrDrop = draft.issues.find(
+          (i) => i.code === "ELEMENT_DROPPED" && i.nodeId === "qr"
+        );
+        expect(qrDrop).toBeDefined();
+        expect(qrDrop.severity).toBe("warning");
+      }
+
+      // result.issues contains ELEMENT_DROPPED
+      expect(
+        resultWithQr.issues.some(
+          (i) => i.code === "ELEMENT_DROPPED" && i.nodeId === "qr"
+        )
+      ).toBe(true);
+
+      // (b) With qr.enabled: false
+      const eventNoQr = {
+        ...sampleEventSpec,
+        qr: { enabled: false },
+      };
+      const resultNoQr = composeDrafts(eventNoQr, {
+        seed: "test-qr-autofix-false",
+        count: 3,
+      });
+
+      expect(resultNoQr.drafts).toHaveLength(3);
+      for (const draft of resultNoQr.drafts) {
+        expect(
+          draft.issues.some((i) => i.code === "ELEMENT_DROPPED")
+        ).toBe(false);
+      }
+      expect(
+        resultNoQr.issues.some((i) => i.code === "ELEMENT_DROPPED")
+      ).toBe(false);
+    });
+
+    // Condition 2: result.issues only contains issues of the 3 chosen drafts plus data errors
+    it("Condition 2: result.issues only contains issues of the chosen drafts plus data errors, not rejected candidates", () => {
+      const result = composeDrafts(sampleEventSpec, {
+        seed: "test-chosen-issues-only",
+        count: 3,
+      });
+
+      expect(result.drafts).toHaveLength(3);
+      // Every non-data-error issue in result.issues must come from one of the chosen drafts
+      const chosenIssueKeys = new Set();
+      for (const draft of result.drafts) {
+        for (const iss of draft.issues || []) {
+          chosenIssueKeys.add(`${iss.code}:${iss.message}:${iss.nodeId}`);
+        }
+      }
+
+      for (const iss of result.issues) {
+        if (iss.code !== "UNKNOWN_ROLE_ID") {
+          const key = `${iss.code}:${iss.message}:${iss.nodeId}`;
+          expect(chosenIssueKeys.has(key)).toBe(true);
+        }
+      }
+    });
+  });
 });
 
 

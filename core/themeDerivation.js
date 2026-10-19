@@ -243,8 +243,8 @@ export function deriveTheme(palette, mode, strategy = "event-led", themeId = "de
       accent,
     },
     fonts: {
-      heading: "Roboto",
-      body: "Roboto",
+      heading: "Space Grotesk",
+      body: "Inter",
     },
   };
 }

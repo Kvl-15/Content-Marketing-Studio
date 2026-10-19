@@ -442,6 +442,7 @@ export const IssueCode = z.enum([
   "NO_PHOTO",
   "EVENT_NAME_DOES_NOT_FIT",
   "UNKNOWN_ROLE_ID",
+  "ELEMENT_DROPPED",
 ]);
 
 /**

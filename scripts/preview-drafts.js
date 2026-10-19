@@ -31,9 +31,9 @@ const fontRegistry = {
     label: "Source Serif 4 + Source Sans 3",
   },
   "default": {
-    heading: loadFont("assets/fonts/Roboto-VariableFont_wdth,wght.ttf"),
-    body: loadFont("assets/fonts/Roboto-VariableFont_wdth,wght.ttf"),
-    label: "Roboto",
+    heading: loadFont("assets/fonts/SpaceGrotesk-Bold.ttf"),
+    body: loadFont("assets/fonts/Inter-Regular.ttf"),
+    label: "Space Grotesk + Inter",
   },
 };
 const font = fontRegistry.default.heading;

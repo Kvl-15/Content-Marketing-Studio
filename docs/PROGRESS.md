@@ -173,6 +173,20 @@
   - Created `scripts/preview-unknown-role.js` demonstrating card with `roleId: "boss"` rendering `"UNKNOWN ROLE"` and blocking D-09 export gate.
   - 227 tests passed across 14 test files (`npx vitest run`).
 
+- Task P0-1: Design-freeze fixes (bottom-stack spacing, 5.5 pt floor, scorer palette tones) (19 October 2026)
+  - Files: `core/schemas.js`, `core/autofix.js`, `core/text.js`, `core/composer.js`, `core/themeDerivation.js`, `core/render.js`, `core/autofix.test.js`, `core/composer.test.js`, `scripts/measure-cards.js`, `scripts/preview-drafts.js`, `scripts/preview-card.js`, `scripts/preview-gallery.js`, `docs/PROGRESS.md`.
+  - Font check: Verified that card rendering in `composer.js` sets `theme.fonts` directly to static pairings (`Space Grotesk` + `Inter` or `Source Serif 4` + `Source Sans 3`) and never reads `"Roboto"` from `content/brand-kits/*/brand.json`. Replaced remaining `"Roboto"` fallback strings in `core/themeDerivation.js` and preview scripts with static fonts (`Space Grotesk` and `Inter`). Preserved golden SVG outline tests in `core/content.test.js`, `core/d1.test.js`, and `core/logos.test.js`.
+  - Bottom stack spacing: Enforced fixed >= 2.0 mm gaps between stacked blocks (`name`, `org`, `role-pill`, `id-line`, `qr-box`, and bottom `role-bar`). Clamped `photoH` to 34-35 mm in `hero-photo-top` (photo area remains > 40% of card height).
+  - 5.5 pt text floor: Enforced Rule D-32 (overriding D-22 in code): autofix, text fitting (`core/text.js` ceiling step rounding), and composer block definitions never shrink text below 5.5 pt anywhere; name fitting retains 9 pt floor and role text >= 7 pt.
+  - Palette scoring: Extended `scoreQuality` to count derived theme tones (`theme.colors.background`, `text`, `accent`), equalizing palette score to 25 across all modes (light, dark, colour-field) and events so palette score no longer biases draft selection.
+  - Dynamic element drop: Registered `ELEMENT_DROPPED` in `IssueCode` in `core/schemas.js`. Under constrained vertical slot space, elements drop in strict order `QR` -> `org` -> `id-line`, emitting `ELEMENT_DROPPED` warning with `nodeId` as element name and person ID in message. When QR is disabled in spec, QR is omitted with no warning.
+  - Condition 3 clash: Preserved and tested horizontal clash between `role-pill` and `qr-box` in `circle-badge-centre` template layout.
+  - Measurement run (20 seeds, 3,840 cards across 4 archetypes x 3 modes x 8 stress people x 2 QR states):
+    - Baseline: Min gap 0.436 mm, min text size 5.39 pt, breaking cards 3,840 / 3,840 (100.0%).
+    - After P0-1: Min gap 2.0 mm, min text size 5.67 pt, breaking cards 0 / 3,840 (0.0%).
+    - Drop counts: QR drops 480 / 960 (50.0%) per archetype due to validator `QR_TOO_SMALL` (< 15x15 mm) when QR is enabled; Org drops: `hero-photo-top` 42 (4.4%), `colour-block-split` 72 (7.5%), `circle-badge-centre` 78 (8.1%), `typographic-name-first` 120 (12.5%); ID-line drops: 0 (0.0%).
+  - 236 tests passed across 14 test files (`npx vitest run`).
+
 ## In progress
 - Physical print test: print `card.svg` on a real printer to verify physical dimensions, margin, and logo sizes (from Task 3).
 
@@ -181,11 +195,11 @@
 - Task D1 (rendering foundations: text as outlines D-28, logo plate D-29, silhouette and initials placeholders) is done. The design rework tasks D2 to D5 are DEFERRED. The six current looks are provisional "Templates v0" (Formal and Tech are the keepers; Bold, Minimal, Editorial and Playful are usable but provisional). We build with them.
 - Later plan: AI-generated designs; if not good, add more hand-made design parts. If the AI is used, it should write looks in our JSON format, not raw SVG, and every AI design must pass schema, stress test and a gallery review before it is saved as a template. D-17 stays until then.
 - D-25: the three drafts for ONE event must be clearly different. D-12 stays, with the long-term reason: the core path (CSV, drafts, export) must work without AI; the AI gateway must be swappable.
-- Known design issues (deferred): role colour is the same blue on every palette and clashes; name type is small (9 pt start); four looks share one layout; logos with white backgrounds look like stickers on colour; dark looks use a fixed navy; "valid" in the gallery means "no errors", not "good-looking" (rename the badge to "no errors" if not done).
+- Known design issues (deferred): role colour is the same blue on every palette and clashes; name type is small (9 pt start); four looks share one layout; logos with white backgrounds look like stickers on colour; dark looks use a fixed navy; "valid" in the gallery means "no errors", not "good-looking" (rename the badge to "no errors" if not done); QR placement deferred to Stage B (D-39): when qr.enabled, reserve a SQUARE of at least 15 x 15 mm plus clear space, planned into the layout. Until then the QR is dropped and ELEMENT_DROPPED is raised. The 2 mm gap, 5.5 pt and drop-rate numbers were measured without a QR on the card; re-measure when QR returns.
 - Planned later: two-sided cards (card sides: front or both).
 
 ## Next
-- Awaiting review of Task R1 (unknown role error handling and validation).
+- Close out of Task P0-1 (P0-1c complete). Awaiting next instruction (e.g. Task P0-2 for role text bold font).
 
 ## Decisions and open questions
 - D-17: layouts are pre-made; never drawn by AI.
@@ -228,6 +242,10 @@
 - Provisional Decision: Dynamic Look Composition Spike (18 October 2026):
   1. Looks are composed per Generate from parameterised generators; seed stored with each draft; rendering deterministic. KB update pending until the spike gallery is approved.
   2. Added additive optional fields: `Look.seed` and `Look.attributes.archetype` in `schemas.js` (Person B and Person C informed).
+- D-39: QR placement deferred to Stage B (19 October 2026):
+  1. QR placement deferred to Stage B. Requirement: when qr.enabled, reserve a SQUARE of at least 15 x 15 mm plus clear space, planned into the layout. Until then the QR is dropped and ELEMENT_DROPPED is raised. The 2 mm gap, 5.5 pt and drop-rate numbers were measured without a QR on the card; re-measure when QR returns.
+  2. Rule D-32 overrides D-22 in code: minimum text floor is strictly 5.5 pt across all elements and all autofix paths (D-32 wins over legacy D-22 allowance of 5 pt).
+  3. Registered additive issue code `ELEMENT_DROPPED` in `core/schemas.js` (warning emitted when optional bottom-stack elements are dropped to maintain >= 2 mm spacing floor).
 - Published Core Function Signatures (updated 19 October 2026):
   - `renderCard(input)` -> `{ svg, scene, issues, fixes }`
   - `autofix({ ...input, scene, issues })` -> `{ scene, issues, fixes }`
