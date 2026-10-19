@@ -1,124 +1,239 @@
-# Frontend Developer Notes (Client Integration)
+# Frontend Notes (D-38)
 
-Written for Person C building `client/`. Plain words, short reference.
+These notes are for the client developer. The API contract is
+`docs/API_CONTRACT.md`; this file explains the client-side rules and the
+current A2 boundaries.
 
----
+## 1. Non-negotiable rules
 
-## 1. Published Core Function Signatures
+1. **One renderer.** Card preview uses `renderCard` imported from
+   `core/index.js` (D-04). The GUI must not create a second renderer, copy
+   SVG/layout logic, copy text fitting, or copy validation logic.
+2. **No QR toggle yet.** The GUI must not offer a QR toggle until D-39 is
+   done. QR is currently dropped when the minimum-size autofix path is used,
+   and `ELEMENT_DROPPED` is raised. Treat that issue as visible state, not as
+   a reason to invent a client-side QR implementation.
+3. **Privacy.** AI never receives names, emails, participant rows, or photos
+   (D-10). Only the brief, edit requests, and CSV headers may be sent when the
+   server explicitly needs them.
+4. **Fallback.** Every AI step has a form fallback (D-12). The GUI must stay
+   usable when the AI is unavailable or returns invalid data.
+5. **Imported IDs are sacred.** IDs from the CSV are kept as-is. The client
+   must not reformat, uppercase, regenerate, or replace an imported ID.
+6. **No guessed API fields.** If `docs/API_CONTRACT.md` marks an endpoint or
+   field PLANNED, keep the client flow behind mock data in `client/` until the
+   server publishes the real shape.
 
-All core functions are pure, deterministic, and synchronous (no network, database, or filesystem I/O in `core/`).
+## 2. Core preview contract
 
-### `renderCard(input)`
-Renders an SVG string and a scene graph from design JSON and data.
-```javascript
+Import the shared renderer:
+
+```js
 import { renderCard } from "../core/index.js";
 
-const { svg, scene, issues, fixes } = renderCard({
-  skeleton,    // Skeleton JSON object
-  blocks,      // Array of Block JSON objects
-  theme,       // Theme JSON object
-  look,        // Look JSON object
-  person,      // Person data: { id, name, org, role, photo }
-  event,       // Event data: { name, date, venue, orgName, orgShort, logoUrl, sponsorLogoUrl }
-  fonts        // Object mapping { heading: opentypeFont, body: opentypeFont }
+const result = renderCard({
+  skeleton,
+  blocks,
+  theme,
+  look,
+  person,
+  event,
+  brand,
+  fonts,
+  card,
 });
 ```
 
-### `validate(scene, context?)`
-Pure validator checking text overflow, margins, WCAG contrast, overlaps, and placeholders. The optional `context` enables deep checks.
-```javascript
-import { validate } from "../core/index.js";
+The **REAL** result is:
 
-const issues = validate(scene, { card: skeleton.card, theme, event, person });
-// Returns Array of Issue objects: [{ code, message, severity: "error" | "warning", node }]
+```js
+{
+  svg,
+  scene,
+  issues,
+  fixes,
+  trimBox,
+  bleedBox,
+  bleedMm,
+}
 ```
 
-### `composeDrafts(event, options?)`
-Composes 3 distinct candidate drafts (diverse archetypes and modes) from an event specification and a deterministic seed.
-```javascript
+Use `result.svg` for the preview and `result.issues` for visible diagnostics.
+Do not turn a warning into a client error, and do not hide an error by
+reimplementing the validator.
+
+`SceneNode` uses millimetre boxes. Text is rendered as paths by the core
+renderer. The current issue codes include `TEXT_TRUNCATED`, `TEXT_OVERFLOW`,
+`TEXT_UNSUPPORTED_GLYPH`, `OVERLAP`, `LOGO_DISTORTED`, `LOGO_CLEARSPACE`,
+`LOGO_TOO_SMALL`, `LOGO_MISSING`, `OUTSIDE_SAFE_MARGIN`, `LOW_CONTRAST`,
+`QR_TOO_SMALL`, `UNFILLED_DATA`, `UNCONFIRMED_VALUE`, `PHOTO_LOW_RES`,
+`NO_PHOTO`, `EVENT_NAME_DOES_NOT_FIT`, `UNKNOWN_ROLE_ID`, and
+`ELEMENT_DROPPED`.
+
+## 3. EventSpec and people
+
+`roles` is at `eventSpec.roles`:
+
+```js
+const role = eventSpec.roles.find((item) => item.id === person.roleId);
+```
+
+The complete EventSpec shape and example are in the API contract. Important
+client facts:
+
+- A role has `id`, `label`, `expectedCount`, and a provenance-wrapped `color`.
+- A `Person` has `id`, `name`, `roleId`, optional `org`/`email`, nullable
+  `photo`, optional `checkinUrl`, and `flags`.
+- `roleId` must match a role id exactly for rendering and validation.
+- Event counts are expectations only; people come from the uploaded dataset.
+- Names are English/Latin-script only under the current project rules.
+
+## 4. Drafts
+
+The current core function returns the top-level shape below. The `issues`
+member is part of the result even when it is empty:
+
+```js
 import { composeDrafts } from "../core/index.js";
 
-const { drafts, seed } = composeDrafts(event, {
-  seed: 42,                  // Number or string. Core NEVER calls Math.random()
-  count: 3,                  // Number of distinct drafts requested (default: 3)
-  previousArchetypes: [],    // Optional: archetypes from earlier clicks to avoid repeating
-  previousSeeds: []          // Optional: earlier seeds
+const result = composeDrafts(eventSpec, {
+  seed: 42,
+  count: 3,
+  previousArchetypes: [],
+  previousSeeds: [],
 });
-// Each draft in drafts: { skeleton, blocks, theme, look, score }
+
+// result = { drafts, seed, issues }
 ```
 
-### `applyOperation(design, op)`
-Applies a single targeted editing operation to an existing design bundle without regenerating.
-```javascript
-import { applyOperation } from "../core/index.js";
+Each draft contains the composed `skeleton`, `blocks`, `theme`, and `look`,
+plus `seed`, `archetype`, `score`, and `scoreDetails`. The current composer
+may also return `scene`, `svg`, `modeFallback`, `fonts`, and draft-level
+`issues`.
 
-const updatedDesign = applyOperation(currentDesign, {
-  op: "setFontPair",
-  target: "look.attributes.typography",
-  value: "editorial-serif"
-});
+When the server returns the contract error `NO_VALID_DRAFT`, show a useful
+empty state and keep the form/manual route available. Do not manufacture a
+placeholder draft.
+
+To preview a saved draft again, pass its saved design bundle to `renderCard`.
+Do not call `composeDrafts` just to redraw the same draft.
+
+## 5. A2 upload report
+
+The data upload success body is:
+
+```js
+{ people, report }
 ```
 
-### `sheetLayout` and Export Functions
-- **Status**: Not in `core/` yet. Scheduled for **Stage A1** (Export module).
-- `sheetLayout` will calculate 8-up A4 imposition with cut marks. For now, preview and render single cards via `renderCard`.
+The report is the real A2 report, including:
 
----
+- detected `format`, optional XLSX `firstSheet`, optional `delimiter`,
+  `headerRow`, and original `headers`;
+- mapping proposals with columns, confidence, competing candidates, unmapped
+  headers, and missing required fields;
+- one row status (`OK`, `WARNING`, or `ERROR`) and its issue entries per row;
+- totals, formula-like-cell count, matched photo records, unmatched photo
+  files, unmatched rows, long-name measurement, and enforced limits.
 
-## 2. Generate / Regenerate Model
+Use the report to build the mapping confirmation and problem-row screens. Row
+issue entries are not the same object as the common API `error.issues` list;
+preserve their source fields and codes.
 
-1. **Seed-Driven**: `composeDrafts` accepts an explicit `seed` parameter. `core/` **never** calls `Math.random()` or `Date.now()`.
-2. **New Seed Per Click**: Every time the user clicks "Generate" or "Regenerate", the frontend (or server) supplies a new seed (e.g. `Date.now()`, random integer, or UUID string).
-3. **Draft Package**: Every generated draft carries its `seed` and complete self-contained `{ skeleton, blocks, theme, look }` JSON bundle.
-4. **Zero-Compose Re-rendering**: Re-rendering a saved draft never calls `composeDrafts`. Simply pass the saved `{ skeleton, blocks, theme, look }` directly to `renderCard(input)`. Output is guaranteed byte-identical across runs (D-11).
+For upload failures, read the common API error envelope. The real A2 typed
+codes include `UNSUPPORTED_FORMAT`, `PARSE_ERROR`, and `VALIDATION_ERROR`.
 
----
+## 6. Error handling
 
-## 3. Additive Optional Fields
+Every API error has this shape:
 
-Every field below is optional and backwards-compatible:
+```js
+{
+  error: {
+    code: string,
+    message: string,
+    issues?: Issue[],
+  },
+}
+```
 
-- `decor` (boolean on Block elements and Scene nodes): Marks decorative elements (bars, backgrounds); the `OVERLAP` validator ignores them.
-- `optional` (boolean on Block elements and Scene nodes): Marks non-critical elements; autofix may hide them cleanly without leaving empty layout gaps.
-- `plate` (`"shared"` | `"auto"` | `{ fill, radiusMm, paddingMm }` on image blocks): Emits a white rounded backing plate for logos on dark or saturated backgrounds; `"shared"` renders a single plate spanning both logos.
-- `seed` (string | number on Look): Records the generation seed for full auditability and reproduction.
-- `archetype` (string on `Look.attributes`): Identifies the layout archetype (`hero-photo-top`, `colour-block-split`, `circle-badge-centre`, `typographic-name-first`).
-- `clip` (`"circle"` | `"rounded"` | `"square"` on image blocks): Clips photos cleanly without image corners poking out.
-- `modeFallback` (boolean on `Look.attributes`): Indicates whether a requested dark or colour-field mode fell back because the palette could not support sufficient contrast.
-- `stroke` (hex string on rect elements and scene nodes): Outline stroke color for borders and pills.
-- `strokeWidth` (number in mm on rect elements and scene nodes): Outline stroke thickness (e.g. 0.6 mm high-contrast outline on role pills).
-- `palette` (array of 1 to 3 hex strings on `EventSpec.event`): Event brand colors used for pure-code theme derivation (D-24).
-- `typography` (string on `Look.attributes`): Active font pairing ID (`modern-grotesk`, `editorial-serif`).
-- `oneLineFloor` (number in pt on text elements): Size floor down to which text shrinks on one line before multi-line wrapping kicks in.
+Render results can contain `issues` without being an HTTP failure. HTTP
+failures use `error`; do not look for a second error format. Display the plain
+`message`, expose issue `code`s for support/debugging, and use `nodeId` when
+highlighting a card element.
 
----
+## 7. Export UI (E2a)
 
-## 4. Vector Text Outlines & Glyph Checking
+The export form must use the exact settings fields from
+`core/exportSettings.js`:
 
-- **Path Outlines**: All text in `renderCard` is converted to vector `<path>` outlines using `opentype.js` (D-28). Output SVGs contain **zero** `<text>` or `font-family` tags. Cards render identically on all machines and mobile screens without client font installation.
-- **Accessibility & Inspector**: Each text shape is wrapped in `<g id="..." aria-label="...">` preserving the original text for accessibility and DOM inspection.
-- **Unsupported Glyphs**: If a character is missing from the active font (maps to glyph index 0), the validator emits `TEXT_UNSUPPORTED_GLYPH` with severity `error`. Preflight must catch this before export.
+```js
+{
+  format,
+  mode,
+  card: { widthMm, heightMm },
+  orientation,
+  dpi,
+  bleedMm,
+  cropMarks,
+  sides,
+  textAsOutlines,
+  groupByRole,
+  duplexFlip,
+  printerSafeMm,
+  sheet: {
+    paper,
+    widthMm,
+    heightMm,
+    marginMm,
+    gapMm,
+    markLengthMm,
+    markOffsetMm,
+    markStrokeMm,
+    printerSafeMm,
+    duplexFlip,
+  },
+}
+```
 
----
+For E2a the UI offers only one-card SVG and PNG. Do not offer PDF, sheets, or
+ZIP until E2b. Do not offer landscape: the server refuses it with
+`UNSUPPORTED_ORIENTATION`. The server refuses every error; it refuses
+warnings unless the request sets `acknowledgedWarnings: true` (D-09).
 
-## 5. How to Run Tests and Previews
+Export file names come from `person.id` only. Never display or construct a
+download filename from a name or email. The server's safe filename may use a
+sanitized id or a `card` fallback.
 
-- **Run Core Test Suite**:
-  ```bash
-  npx vitest run
-  ```
-- **Generate Draft Gallery (Visual Preview)**:
-  ```bash
-  node scripts/preview-drafts.js
-  ```
-  Generates `drafts.html` in the root folder, displaying side-by-side composed drafts for 10 events, 5 seeds for one event, role matrices, and grayscale toggles.
-- **Content Reference**:
-  Read [docs/ADDING_CONTENT.md](file:///c:/Users/Prakashkumar/Content-Marketing-Studio/docs/ADDING_CONTENT.md) for instructions on defining skeletons, blocks, themes, and looks.
+## 8. AI and form flow
 
----
+The client owns the question widgets and can operate without AI:
 
-## 6. Code Ownership & Boundaries
+1. Submit a brief or choose the manual form.
+2. Show extracted values with provenance and ask only for actual gaps.
+3. Let the user confirm or decline optional values.
+4. Save and lock a validated EventSpec.
+5. Upload data and confirm the proposed mapping.
+6. Show drafts, render previews through the shared core, and surface issues.
 
-- **Person C**: Owns `client/` (React frontend, UI components, editor, user state, preview UI).
-- **User**: Owns `server/` (Express API, database, file uploads, export jobs) and `core/` (schemas, render, text, composer, validator).
-- **Antigravity (AI Assistant)**: `client/` is **strictly off-limits**. Antigravity will never create, edit, or delete files inside `client/`.
+Never treat an unconfirmed suggestion as printable data. Never send a photo,
+email, or participant row to the AI gateway.
+
+## 9. Implemented versus planned
+
+The API contract deliberately marks project storage, EventSpec patch/lock
+envelopes, draft/render route envelopes, version saving, export progress, and
+downloads as PLANNED where no server shape exists. Until those shapes are
+published, keep the client mock local and do not infer fields from a screen or
+from an old knowledge-base example.
+
+## 10. Manual checks
+
+- Turn off AI and complete the form path.
+- Confirm roles render from `eventSpec.roles` and an unknown `roleId` shows
+  `UNKNOWN_ROLE_ID`.
+- Upload the messy fixture and verify the report totals, row statuses, mapping
+  proposals, and photo matching lists are visible.
+- Preview the same saved draft twice and verify both previews use `renderCard`.
+- Confirm the E2a export controls do not show QR, PDF, sheets, ZIP, or
+  landscape options, and that filenames contain IDs but not names/emails.

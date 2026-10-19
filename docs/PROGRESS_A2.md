@@ -71,3 +71,43 @@ These defaults allow 300 photos of up to 8 MiB each while bounding archive entry
 ## Suggested commit message
 
 `feat: add deterministic event data and photo pipeline`
+
+## D-38 API contract
+
+Date: 2026-10-20
+
+### Done
+
+- Wrote `docs/API_CONTRACT.md` with one common API error envelope, the REAL
+  EventSpec and A2 report shapes/examples, endpoint request/response/error
+  coverage, exact export settings, D-09 gating, E2a limits, and PLANNED/open
+  questions where server shapes do not exist.
+- Rewrote `docs/FRONTEND_NOTES.md` with the one-renderer rule, D-39 QR-toggle
+  restriction, D-10 privacy rule, D-12 form fallback, imported-ID rule, A2
+  report guidance, and E2a export limits.
+
+### Checks
+
+- `git diff --check` — passed.
+- No code or library changes were made. No test suite was run because this
+  task changes documents only.
+
+### Half-finished / known gaps
+
+- Project persistence, EventSpec PATCH/lock envelopes, HTTP upload field
+  names, draft/render route envelopes, version records, export progress, and
+  download transport remain explicitly PLANNED in `docs/API_CONTRACT.md`.
+
+### Single next task
+
+- Implement the server routes against D-38 after the PLANNED request and
+  response envelopes are agreed.
+
+### Decision / open question
+
+- D-38 uses the current `core/exportSettings.js` fields, including `mode:
+  "sheets"` and nested sheet settings, rather than the older Part 5 example.
+
+### Suggested commit message
+
+`docs: define A2 API contract and frontend boundaries`
