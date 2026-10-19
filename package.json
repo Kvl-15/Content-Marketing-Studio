@@ -21,7 +21,12 @@
     "@eslint/js": "^10.0.1",
     "eslint": "^10.12.0",
     "globals": "^17.13.0",
+    "papaparse": "^5.7.0",
     "prettier": "^3.9.10",
-    "vitest": "^5.0.4"
+    "sharp": "^0.35.5",
+    "vitest": "^5.0.4",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
+    "yauzl": "^3.4.0",
+    "zod": "^4.6.7"
   }
 }
