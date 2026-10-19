@@ -185,7 +185,18 @@
     - Baseline: Min gap 0.436 mm, min text size 5.39 pt, breaking cards 3,840 / 3,840 (100.0%).
     - After P0-1: Min gap 2.0 mm, min text size 5.67 pt, breaking cards 0 / 3,840 (0.0%).
     - Drop counts: QR drops 480 / 960 (50.0%) per archetype due to validator `QR_TOO_SMALL` (< 15x15 mm) when QR is enabled; Org drops: `hero-photo-top` 42 (4.4%), `colour-block-split` 72 (7.5%), `circle-badge-centre` 78 (8.1%), `typographic-name-first` 120 (12.5%); ID-line drops: 0 (0.0%).
-  - 236 tests passed across 14 test files (`npx vitest run`).
+  - 239 tests passed across 14 test files (`npx vitest run`).
+
+- Task B1: Bleed in the renderer (20 October 2026)
+  - Files: `core/render.js`, `core/exportSettings.js`, `core/bleed.test.js`, `scripts/preview-drafts.js`, `docs/PROGRESS.md`.
+  - Bleed input: Added optional `bleedMm` (0 to 10 mm, validated against `BleedMmSchema` imported directly from `core/exportSettings.js`). Negative, >10, NaN, Infinity, strings, and null are rejected with clear errors. Defaults to 0 when omitted, preserving 100% byte-identical SVG output against golden files.
+  - SVG bleed geometry: When `bleedMm > 0`, card SVG viewBox expands to `-${bleedMm} -${bleedMm} ${54 + 2*bleedMm} ${85.6 + 2*bleedMm}` with width `${54 + 2*bleedMm}mm` and height `${85.6 + 2*bleedMm}mm` (60 x 91.6 mm for bleed 3). Scene coordinates do NOT move: trim box remains 0..54 by 0..85.6.
+  - Decor extension in SVG only (Conditions 1 & 3): Scene nodes are never mutated: returned `scene` is strictly deep-equal with and without bleed, and validator issues are identical. Decor shapes identified strictly by `decor: true` touching or crossing trim edges (within 0.01 mm) extend outward by `bleedMm` in SVG emission. Non-decor shapes (text outlines, photos, logos, role pill) are never extended.
+  - Trim safe-margin enforcement (Condition 5): Verified that existing `checkOutsideSafeMargin` in `core/validate.js` already catches non-decor elements touching the trim edge (distance 0 < 3 mm margin -> `OUTSIDE_SAFE_MARGIN`). No new issue code needed and `IssueCode` enum untouched.
+  - Additive sheet boxes (Condition 6): Returned object additively exposes `trimBox: { x: 0, y: 0, w: 54, h: 85.6 }` (card-local, origin 0,0) and `bleedBox: { x: bleedMm === 0 ? 0 : -bleedMm, y: bleedMm === 0 ? 0 : -bleedMm, w: 54 + 2*bleedMm, h: 85.6 + 2*bleedMm }`, matching `SheetCell` box field names in `core/sheet.js`.
+  - Visual preview overlay (Condition 7): Added `--bleed` CLI flag to `scripts/preview-drafts.js`. In `--bleed` mode, cards render with `bleedMm: 3` and superimpose an HTML/CSS dashed green trim line (`.trim-overlay`, 1.5px dashed #22C55E) directly positioned against the SVG's own box without round-corner clipping. Without `--bleed`, the output is 100% identical as before.
+  - Tests: 10 new unit tests in `core/bleed.test.js` covering all 4 archetypes x 3 modes, scene node deep-equality, viewBox/size for bleed 0/1/3/10, golden SVG byte-identity, validator parity, invalid bleed inputs, determinism, 57-char names, decor: true flag only, and trim-touching non-decor safe margin.
+  - Exact test count: 249 tests passing across 15 test files (`npx vitest run`).
 
 ## In progress
 - Physical print test: print `card.svg` on a real printer to verify physical dimensions, margin, and logo sizes (from Task 3).
@@ -199,7 +210,7 @@
 - Planned later: two-sided cards (card sides: front or both).
 
 ## Next
-- Close out of Task P0-1 (P0-1c complete). Awaiting next instruction (e.g. Task P0-2 for role text bold font).
+- Task B2: Two-sided card layout support or Stage B layout rebuild. Awaiting user instruction.
 
 ## Decisions and open questions
 - D-17: layouts are pre-made; never drawn by AI.
@@ -246,8 +257,13 @@
   1. QR placement deferred to Stage B. Requirement: when qr.enabled, reserve a SQUARE of at least 15 x 15 mm plus clear space, planned into the layout. Until then the QR is dropped and ELEMENT_DROPPED is raised. The 2 mm gap, 5.5 pt and drop-rate numbers were measured without a QR on the card; re-measure when QR returns.
   2. Rule D-32 overrides D-22 in code: minimum text floor is strictly 5.5 pt across all elements and all autofix paths (D-32 wins over legacy D-22 allowance of 5 pt).
   3. Registered additive issue code `ELEMENT_DROPPED` in `core/schemas.js` (warning emitted when optional bottom-stack elements are dropped to maintain >= 2 mm spacing floor).
-- Published Core Function Signatures (updated 19 October 2026):
-  - `renderCard(input)` -> `{ svg, scene, issues, fixes }`
+- D-40: Bleed in the renderer and SVG emission (20 October 2026):
+  1. `renderCard` accepts optional additive `bleedMm` (0 to 10 mm, validated against `BleedMmSchema` imported directly from `core/exportSettings.js`).
+  2. Bleed is applied exclusively when emitting SVG; returned `scene` remains in trim coordinates (0..54 by 0..85.6) and is strictly deep-equal with and without bleed.
+  3. Decor shapes are identified exclusively by `node.decor === true` (never matching id "bg"). Decor rects touching or crossing trim boundaries extend outward by `bleedMm` on that edge in SVG. Non-decor elements are never extended into bleed.
+  4. `renderCard` returns additive `trimBox`, `bleedBox`, and `bleedMm` matching `SheetCell` naming convention in `core/sheet.js`.
+- Published Core Function Signatures (updated 20 October 2026):
+  - `renderCard(input)` -> `{ svg, scene, issues, fixes, trimBox, bleedBox, bleedMm }`
   - `autofix({ ...input, scene, issues })` -> `{ scene, issues, fixes }`
   - `validate(scene, context?)` -> `issues`
   - `applyOperation(design, op)` -> `design`

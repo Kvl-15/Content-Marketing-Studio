@@ -42,6 +42,37 @@ const font = fontRegistry.default.heading;
 const { brandKits } = loadContent();
 const activeBrandKit = brandKits["test-logos"] || brandKits["acm-nitsurat"] || sampleBrandKit;
 
+// Parse --bleed CLI flag (Task B1)
+const hasBleed = process.argv.includes("--bleed");
+const bleedMm = hasBleed ? 3 : 0;
+
+/**
+ * Wraps renderCard with optional bleedMm.
+ *
+ * @param {Record<string, any>} params
+ * @returns {ReturnType<typeof renderCard>}
+ */
+function renderPreviewCard(params) {
+  return renderCard({
+    ...params,
+    ...(hasBleed ? { bleedMm: 3 } : {}),
+  });
+}
+
+/**
+ * Emits the SVG container. In --bleed mode, corners are not round-clipped
+ * and a dashed green trim overlay is positioned directly against the SVG's box.
+ *
+ * @param {{ svg: string }} cardRender
+ * @returns {string}
+ */
+function renderCardContainer(cardRender) {
+  if (hasBleed) {
+    return `<div class="svg-container bleed-mode">${cardRender.svg}<div class="trim-overlay" aria-hidden="true" title="Trim boundary (54 x 85.6 mm)"></div></div>`;
+  }
+  return `<div class="svg-container">${cardRender.svg}</div>`;
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 //  Realistic SVG Placeholder Avatars (Scripts Only, flat vector shapes)
 // ═══════════════════════════════════════════════════════════════════════
@@ -233,8 +264,26 @@ let html = `<!DOCTYPE html>
       box-shadow: 0 6px 18px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.08);
       background: #000;
       transition: filter 0.3s ease;
+      position: relative;
     }
     .svg-container svg { width: 100%; height: 100%; display: block; }
+    .svg-container.bleed-mode {
+      width: 160px;
+      height: 244.27px;
+      border-radius: 0;
+      overflow: visible;
+      box-shadow: none;
+    }
+    .trim-overlay {
+      position: absolute;
+      left: calc(3 / 60 * 100%);
+      top: calc(3 / 91.6 * 100%);
+      width: calc(54 / 60 * 100%);
+      height: calc(85.6 / 91.6 * 100%);
+      border: 1.5px dashed #22C55E;
+      box-sizing: border-box;
+      pointer-events: none;
+    }
     .card-meta {
       margin-top: 10px;
       font-size: 11px;
@@ -340,7 +389,7 @@ for (let eIdx = 0; eIdx < showcaseEvents.length; eIdx++) {
     const typeKey = draft.look.attributes.typography;
     const activeFonts = fontRegistry[typeKey] || fontRegistry.default;
 
-    const cardRender = renderCard({
+    const cardRender = renderPreviewCard({
       person: { ...personNormal, photo: avatar },
       event: eventSpec,
       brand: activeBrandKit,
@@ -359,9 +408,7 @@ for (let eIdx = 0; eIdx < showcaseEvents.length; eIdx++) {
 
     html += `
       <div class="card-cell">
-        <div class="svg-container">
-          ${cardRender.svg}
-        </div>
+        ${renderCardContainer(cardRender)}
         <div class="card-meta">
           <div><span>Archetype:</span> <strong>${draft.archetype}</strong></div>
           <div><span>Mode:</span> <code>${draft.look.attributes.mode}</code></div>
@@ -420,7 +467,7 @@ for (let sIdx = 0; sIdx < proofSeeds.length; sIdx++) {
   const typeKey = draftBundle.look.attributes.typography;
   const activeFonts = fontRegistry[typeKey] || fontRegistry.default;
 
-  const cardRender = renderCard({
+  const cardRender = renderPreviewCard({
     person: { ...personNormal, photo: avatar },
     event: singleEventSpec,
     brand: activeBrandKit,
@@ -438,9 +485,7 @@ for (let sIdx = 0; sIdx < proofSeeds.length; sIdx++) {
 
   html += `
     <div class="card-cell">
-      <div class="svg-container">
-        ${cardRender.svg}
-      </div>
+      ${renderCardContainer(cardRender)}
       <div class="card-meta">
         <div><span>Archetype:</span> <strong>${draftBundle.archetype}</strong></div>
         <div><span>Mode:</span> <code>${draftBundle.look.attributes.mode}</code></div>
@@ -494,7 +539,7 @@ for (let rIdx = 0; rIdx < rolesShowcase.length; rIdx++) {
     roles: [{ id: r.id, label: r.label, expectedCount: 20, color: { value: r.color } }],
   };
 
-  const cardRender = renderCard({
+  const cardRender = renderPreviewCard({
     person: { ...personNormal, roleId: r.id, photo: avatar },
     event: roleEventSpec,
     brand: activeBrandKit,
@@ -508,9 +553,7 @@ for (let rIdx = 0; rIdx < rolesShowcase.length; rIdx++) {
 
   html += `
     <div class="card-cell">
-      <div class="svg-container">
-        ${cardRender.svg}
-      </div>
+      ${renderCardContainer(cardRender)}
       <div class="card-meta">
         <div><span>Role:</span> <strong>${r.label}</strong></div>
         <div><span>Lightness:</span> <code>${r.lightness} L</code></div>
@@ -534,7 +577,7 @@ html += `<h2 class="section-title">4. Edge Cases Showcase (No Photo, Missing Org
 const edgeDraft = compose(singleEventSpec, 777, "typographic-name-first");
 
 // Case 1: No Photo
-const renderNoPhoto = renderCard({
+const renderNoPhoto = renderPreviewCard({
   person: { ...personNormal, photo: null },
   event: singleEventSpec,
   brand: activeBrandKit,
@@ -547,7 +590,7 @@ const renderNoPhoto = renderCard({
 });
 
 // Case 2: Missing Org
-const renderNoOrg = renderCard({
+const renderNoOrg = renderPreviewCard({
   person: { ...personNormal, org: undefined, photo: avatars[0] },
   event: singleEventSpec,
   brand: activeBrandKit,
@@ -560,7 +603,7 @@ const renderNoOrg = renderCard({
 });
 
 // Case 3: Missing ID
-const renderNoId = renderCard({
+const renderNoId = renderPreviewCard({
   person: { ...personNormal, id: "", photo: avatars[1] },
   event: singleEventSpec,
   brand: activeBrandKit,
@@ -573,7 +616,7 @@ const renderNoId = renderCard({
 });
 
 // Case 4: 57-char long name
-const renderLongName = renderCard({
+const renderLongName = renderPreviewCard({
   person: personLongName,
   event: singleEventSpec,
   brand: activeBrandKit,
@@ -592,28 +635,28 @@ html += `
   </div>
   <div class="drafts-row">
     <div class="card-cell">
-      <div class="svg-container">${renderNoPhoto.svg}</div>
+      ${renderCardContainer(renderNoPhoto)}
       <div class="card-meta">
         <div><span>Case:</span> <strong>No Photo</strong></div>
         <div><span>Behavior:</span> Silhouette / Initials</div>
       </div>
     </div>
     <div class="card-cell">
-      <div class="svg-container">${renderNoOrg.svg}</div>
+      ${renderCardContainer(renderNoOrg)}
       <div class="card-meta">
         <div><span>Case:</span> <strong>Missing Org</strong></div>
         <div><span>Behavior:</span> Closes gap cleanly</div>
       </div>
     </div>
     <div class="card-cell">
-      <div class="svg-container">${renderNoId.svg}</div>
+      ${renderCardContainer(renderNoId)}
       <div class="card-meta">
         <div><span>Case:</span> <strong>Missing ID</strong></div>
         <div><span>Behavior:</span> Optional field hidden</div>
       </div>
     </div>
     <div class="card-cell">
-      <div class="svg-container">${renderLongName.svg}</div>
+      ${renderCardContainer(renderLongName)}
       <div class="card-meta">
         <div><span>Case:</span> <strong>57-Char Long Name</strong></div>
         <div><span>Behavior:</span> Scaled to floor & fits</div>
@@ -640,7 +683,7 @@ for (const b of Object.values(beforeBlocks)) {
     }
   }
 }
-const renderBeforePlate = renderCard({
+const renderBeforePlate = renderPreviewCard({
   person: { ...personNormal, photo: avatars[0] },
   event: { ...singleEventSpec, event: { ...singleEventSpec.event, palette: showcaseEvents[0].palette } },
   brand: activeBrandKit,
@@ -653,7 +696,7 @@ const renderBeforePlate = renderCard({
 });
 
 // After: one shared plate (plate: "shared")
-const renderAfterPlate = renderCard({
+const renderAfterPlate = renderPreviewCard({
   person: { ...personNormal, photo: avatars[0] },
   event: { ...singleEventSpec, event: { ...singleEventSpec.event, palette: showcaseEvents[0].palette } },
   brand: activeBrandKit,
@@ -667,7 +710,7 @@ const renderAfterPlate = renderCard({
 
 // After on Light Background (no plate drawn)
 const lightDraft = compose(showcaseEvents[0], 102, "hero-photo-top", "light");
-const renderLightPlate = renderCard({
+const renderLightPlate = renderPreviewCard({
   person: { ...personNormal, photo: avatars[1] },
   event: { ...singleEventSpec, event: { ...singleEventSpec.event, palette: showcaseEvents[0].palette } },
   brand: activeBrandKit,
@@ -686,7 +729,7 @@ html += `
   </div>
   <div class="drafts-row">
     <div class="card-cell">
-      <div class="svg-container">${renderBeforePlate.svg}</div>
+      ${renderCardContainer(renderBeforePlate)}
       <div class="card-meta">
         <div><span>State:</span> <strong>BEFORE (C2b)</strong></div>
         <div><span>Plates:</span> 2 separate boxes</div>
@@ -694,7 +737,7 @@ html += `
       </div>
     </div>
     <div class="card-cell">
-      <div class="svg-container">${renderAfterPlate.svg}</div>
+      ${renderCardContainer(renderAfterPlate)}
       <div class="card-meta">
         <div><span>State:</span> <strong>AFTER (C2c)</strong></div>
         <div><span>Plates:</span> 1 shared rounded plate</div>
@@ -702,7 +745,7 @@ html += `
       </div>
     </div>
     <div class="card-cell">
-      <div class="svg-container">${renderLightPlate.svg}</div>
+      ${renderCardContainer(renderLightPlate)}
       <div class="card-meta">
         <div><span>State:</span> <strong>LIGHT BACKGROUND</strong></div>
         <div><span>Plates:</span> No plate needed</div>

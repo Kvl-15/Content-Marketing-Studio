@@ -51,6 +51,15 @@ export const SheetSettingsSchema = z
   .strict();
 
 /**
+ * Bleed margin schema in millimeters (CR80 standard: 0 to 10 mm).
+ */
+export const BleedMmSchema = z
+  .number({ invalid_type_error: "bleedMm must be a number" })
+  .finite("bleedMm must be finite")
+  .min(0, "bleedMm cannot be negative")
+  .max(10, "bleedMm cannot exceed 10mm");
+
+/**
  * Raw ExportSettings Zod schema before applying defaults and cross-field logic.
  */
 export const ExportSettingsSchema = z
@@ -60,7 +69,7 @@ export const ExportSettingsSchema = z
     card: CardSizeSchema.default({ widthMm: 54, heightMm: 85.6 }),
     orientation: z.enum(["portrait", "landscape"]).default("portrait"),
     dpi: z.number().int("dpi must be an integer").min(72, "dpi must be at least 72").max(1200, "dpi cannot exceed 1200").default(300),
-    bleedMm: z.number().finite("bleedMm must be finite").min(0, "bleedMm cannot be negative").max(10, "bleedMm cannot exceed 10mm").default(3),
+    bleedMm: BleedMmSchema.default(3),
     cropMarks: z.boolean().optional(),
     sides: z.enum(["front", "back", "both"]).default("front"),
     textAsOutlines: z.boolean().default(true),

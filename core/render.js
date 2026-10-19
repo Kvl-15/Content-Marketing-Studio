@@ -1,4 +1,5 @@
 // @ts-check
+import { BleedMmSchema } from "./exportSettings.js";
 import { autofix } from "./autofix.js";
 import {
   defaultBlocks,
@@ -95,9 +96,23 @@ function toAbsolute(pct, slot) {
  * Renders an ID card into an SVG, scene graph, and issue list.
  *
  * @param {Record<string, any>} input
- * @returns {{ svg: string, scene: import("./schemas.js").SceneNode extends import("zod").ZodType<infer T> ? T[] : any[], issues: import("./schemas.js").Issue extends import("zod").ZodType<infer T> ? T[] : any[], fixes: Array<{ code: string, nodeId?: string, action: string }> }}
+ * @returns {{ svg: string, scene: import("./schemas.js").SceneNode extends import("zod").ZodType<infer T> ? T[] : any[], issues: import("./schemas.js").Issue extends import("zod").ZodType<infer T> ? T[] : any[], fixes: Array<{ code: string, nodeId?: string, action: string }>, trimBox: { x: number, y: number, w: number, h: number }, bleedBox: { x: number, y: number, w: number, h: number }, bleedMm: number }}
  */
 export function renderCard(input) {
+  if (!input || typeof input !== "object") {
+    throw new Error("renderCard requires an input object");
+  }
+
+  // Validate optional bleed input (matches ExportSettings.bleedMm range 0..10)
+  let bleedMm = 0;
+  if (input.bleedMm !== undefined) {
+    const parsed = BleedMmSchema.safeParse(input.bleedMm);
+    if (!parsed.success) {
+      throw new Error(`Invalid bleedMm: ${parsed.error.issues[0]?.message || "must be a finite number between 0 and 10"}`);
+    }
+    bleedMm = parsed.data;
+  }
+
   const skeleton = input.skeleton || {
     id: "portrait",
     size: { w: 54, h: 85.6 },
@@ -659,6 +674,34 @@ export function renderCard(input) {
   // 9. Emit SVG strictly from the final (repaired) scene nodes
   const svgElements = scene.map((node) => {
     if (node.type === "rect") {
+      let rx = node.box.x;
+      let ry = node.box.y;
+      let rw = node.box.w;
+      let rh = node.box.h;
+
+      if (bleedMm > 0 && node.decor === true) {
+        // Extend decor shapes touching or crossing trim edges outward by bleedMm on that side only
+        const touchesLeft = node.box.x <= 0.01;
+        const touchesTop = node.box.y <= 0.01;
+        const touchesRight = (node.box.x + node.box.w) >= widthMm - 0.01;
+        const touchesBottom = (node.box.y + node.box.h) >= heightMm - 0.01;
+
+        if (touchesLeft) {
+          rx -= bleedMm;
+          rw += bleedMm;
+        }
+        if (touchesRight) {
+          rw += bleedMm;
+        }
+        if (touchesTop) {
+          ry -= bleedMm;
+          rh += bleedMm;
+        }
+        if (touchesBottom) {
+          rh += bleedMm;
+        }
+      }
+
       if (node.photoMode === "silhouette") {
         const clipId = `clip-${node.id}`;
         const radius = node.radius ?? 4;
@@ -695,8 +738,22 @@ export function renderCard(input) {
 
       const radiusAttr = node.radius ? ` rx="${node.radius}" ry="${node.radius}"` : "";
       const strokeAttr = node.stroke ? ` stroke="${node.stroke}" stroke-width="${node.strokeWidth || 0.6}"` : "";
-      return `<rect id="${node.id}" x="${node.box.x}" y="${node.box.y}" width="${node.box.w}" height="${node.box.h}" fill="${node.fill}"${radiusAttr}${strokeAttr}/>`;
+      return `<rect id="${node.id}" x="${rx}" y="${ry}" width="${rw}" height="${rh}" fill="${node.fill}"${radiusAttr}${strokeAttr}/>`;
     }
+
+    if (bleedMm > 0 && node.decor === true && node.type !== "rect") {
+      const touchesEdge =
+        node.box.x <= 0.01 ||
+        node.box.y <= 0.01 ||
+        (node.box.x + node.box.w) >= widthMm - 0.01 ||
+        (node.box.y + node.box.h) >= heightMm - 0.01;
+      if (touchesEdge) {
+        console.warn(
+          `[renderCard] Non-rect decor node "${node.id}" (${node.type}) touches trim edge; bleed extension is not supported for ${node.type}.`
+        );
+      }
+    }
+
     if (node.type === "image") {
       if (node.clip === "circle") {
         const clipId = `clip-${node.id}`;
@@ -748,7 +805,22 @@ export function renderCard(input) {
     return "";
   });
 
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${widthMm}mm" height="${heightMm}mm" viewBox="0 0 ${widthMm} ${heightMm}">${svgElements.join("")}</svg>`;
+  const totalW = widthMm + 2 * bleedMm;
+  const totalH = heightMm + 2 * bleedMm;
+  const viewBox = bleedMm > 0
+    ? `-${bleedMm} -${bleedMm} ${totalW} ${totalH}`
+    : `0 0 ${widthMm} ${heightMm}`;
+  const widthAttr = `${totalW}mm`;
+  const heightAttr = `${totalH}mm`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${widthAttr}" height="${heightAttr}" viewBox="${viewBox}">${svgElements.join("")}</svg>`;
 
-  return { svg, scene, issues, fixes };
+  const trimBox = { x: 0, y: 0, w: widthMm, h: heightMm };
+  const bleedBox = {
+    x: bleedMm === 0 ? 0 : -bleedMm,
+    y: bleedMm === 0 ? 0 : -bleedMm,
+    w: totalW,
+    h: totalH,
+  };
+
+  return { svg, scene, issues, fixes, trimBox, bleedBox, bleedMm };
 }
