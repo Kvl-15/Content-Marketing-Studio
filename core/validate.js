@@ -542,6 +542,41 @@ export function checkTextUnsupportedGlyph(scene, font, fonts) {
 }
 
 /**
+ * UNKNOWN_ROLE_ID (Error)
+ * Checks that person.roleId is present, non-empty, a string, and exactly matches
+ * a role id defined in event.roles (exact, case-sensitive).
+ *
+ * @param {any} [person]
+ * @param {any} [event]
+ * @param {any[]} [scene]
+ * @returns {any[]}
+ */
+export function checkUnknownRoleId(person, event, scene = []) {
+  if (!person || !event) return [];
+  const roleId = person.roleId;
+  const personId = person.id || "unknown";
+
+  const isString = typeof roleId === "string";
+  const isNonEmpty = isString && roleId.trim().length > 0;
+  const roles = Array.isArray(event.roles) ? event.roles : (Array.isArray(event?.event?.roles) ? event.event.roles : []);
+  const matchesRole = isNonEmpty && roles.some((r) => r && r.id === roleId);
+
+  if (!matchesRole) {
+    const roleNode = Array.isArray(scene) ? scene.find((n) => n.id === "role") : null;
+    return [
+      {
+        severity: "error",
+        code: "UNKNOWN_ROLE_ID",
+        nodeId: roleNode ? roleNode.id : "role",
+        message: `Person "${personId}" has invalid or unrecognised roleId "${String(roleId)}"; must match an id in event.roles`,
+      },
+    ];
+  }
+
+  return [];
+}
+
+/**
  * Validates a scene graph and context against all design and brand rules.
  *
  * @param {any[]} scene - Array of SceneNodes
@@ -567,6 +602,8 @@ export function validate(scene, context = {}) {
   issues.push(...checkLogoClearspace(scene, context.brand));
   issues.push(...checkQrTooSmall(scene));
   issues.push(...checkUnconfirmedValue(context.event));
+  issues.push(...checkUnknownRoleId(context.person, context.event, scene));
 
   return issues;
 }
+

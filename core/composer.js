@@ -1238,6 +1238,8 @@ export function composeDrafts(event, options) {
 
   /** @type {any[]} */
   const candidates = [];
+  /** @type {any[]} */
+  const collectedIssues = [];
 
   // Generate candidate pool cycling across all 4 archetypes and modes
   for (let i = 0; i < sampleSize; i++) {
@@ -1268,8 +1270,19 @@ export function composeDrafts(event, options) {
 
       const errors = (res.issues || []).filter((iss) => iss.severity === "error");
       if (errors.length > 0) {
-        passesStress = false;
-        break;
+        for (const err of errors) {
+          if (!collectedIssues.some((ci) => ci.code === err.code && ci.message === err.message)) {
+            collectedIssues.push(err);
+          }
+        }
+        // Only layout/design errors disqualify a candidate template from passing stress tests.
+        // Participant data errors (such as UNKNOWN_ROLE_ID) are surfaced in result.issues,
+        // but must NOT hide the designs (bad data must be shown on the card, not hide the drafts).
+        const designErrors = errors.filter((iss) => iss.code !== "UNKNOWN_ROLE_ID");
+        if (designErrors.length > 0) {
+          passesStress = false;
+          break;
+        }
       }
 
       if (!sampleScene) {
@@ -1294,7 +1307,7 @@ export function composeDrafts(event, options) {
   }
 
   if (candidates.length < count) {
-    return { drafts: candidates, seed };
+    return { drafts: candidates, seed, issues: collectedIssues };
   }
 
   if (count === 1) {
@@ -1304,7 +1317,7 @@ export function composeDrafts(event, options) {
       if (aUnseen !== bUnseen) return aUnseen ? -1 : 1;
       return b.score - a.score;
     });
-    return { drafts: sorted.slice(0, 1), seed };
+    return { drafts: sorted.slice(0, 1), seed, issues: collectedIssues };
   }
 
   if (count === 2) {
@@ -1321,7 +1334,7 @@ export function composeDrafts(event, options) {
         }
       }
     }
-    return { drafts: bestPair || candidates.slice(0, 2), seed };
+    return { drafts: bestPair || candidates.slice(0, 2), seed, issues: collectedIssues };
   }
 
   // Find candidate triplets satisfying distinctness rules
@@ -1393,7 +1406,7 @@ export function composeDrafts(event, options) {
 
   if (validTriplets.length === 0) {
     const top = candidates.sort((a, b) => b.score - a.score).slice(0, count);
-    return { drafts: top, seed };
+    return { drafts: top, seed, issues: collectedIssues };
   }
 
   // Sort triplets:
@@ -1414,5 +1427,5 @@ export function composeDrafts(event, options) {
     return b.totalScore - a.totalScore;
   });
 
-  return { drafts: validTriplets[0].triplet, seed };
+  return { drafts: validTriplets[0].triplet, seed, issues: collectedIssues };
 }

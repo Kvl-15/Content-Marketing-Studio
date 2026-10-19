@@ -33,4 +33,6 @@ export {
   createPrng,
   hashSeed,
 } from "./composer.js";
+export * from "./exportSettings.js";
+export * from "./sheet.js";
 

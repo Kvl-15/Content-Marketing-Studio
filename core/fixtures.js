@@ -30,6 +30,14 @@ export const sampleEventSpec = {
       id: "mentor", label: "MENTOR", expectedCount: 20,
       color: { value: "#16A34A", status: "defaulted", source: "default" },
     },
+    {
+      id: "organizer", label: "ORGANIZER", expectedCount: 15,
+      color: { value: "#D97706", status: "provided", source: "brief" },
+    },
+    {
+      id: "volunteer", label: "VOLUNTEER", expectedCount: 25,
+      color: { value: "#BAE6FD", status: "defaulted", source: "default" },
+    },
   ],
   fields: { value: ["name", "role", "id", "photo", "qr"], status: "provided", source: "answer" },
   card: {

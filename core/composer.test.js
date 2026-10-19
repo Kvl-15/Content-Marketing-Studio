@@ -776,6 +776,64 @@ describe("Spike C1 + C2: Dynamic Look Composition and Quality Scorer", () => {
     expect(res2.issues.filter((i) => i.severity === "error")).toHaveLength(0);
     expect(res2.svg).toContain("<path");
   });
+
+  it("Task R1: composeDrafts surfaces UNKNOWN_ROLE_ID error when sampled person has bad role", () => {
+    const badPerson = {
+      ...personNormal,
+      id: "P-BAD-ROLE",
+      roleId: "unregistered-role",
+    };
+
+    const result = composeDrafts(sampleEventSpec, {
+      seed: "test-bad-role-sample",
+      stressSet: [badPerson],
+    });
+
+    // composeDrafts must surface the issue rather than silently dropping or hiding it
+    expect(result.issues).toBeDefined();
+    expect(result.drafts).toHaveLength(3);
+    const roleIssues = result.issues.filter((i) => i.code === "UNKNOWN_ROLE_ID");
+    expect(roleIssues.length).toBeGreaterThan(0);
+    expect(roleIssues[0].severity).toBe("error");
+    expect(roleIssues[0].message).toContain("P-BAD-ROLE");
+    expect(roleIssues[0].message).toContain("unregistered-role");
+  });
+
+  it("Task R1 follow-up: composeDrafts with ONE person whose roleId is 'boss' in the sampled people", () => {
+    const bossPerson = {
+      ...personNormal,
+      id: "P-BOSS",
+      name: "Big Boss",
+      roleId: "boss", // Role not in sampleEventSpec.roles
+    };
+
+    const result = composeDrafts(sampleEventSpec, {
+      seed: "test-boss-sample",
+      stressSet: [bossPerson],
+    });
+
+    // 1. Required behaviour: the drafts are still returned (3 drafts returned, not zero!)
+    expect(result.drafts).toHaveLength(3);
+
+    // 2. Bad data must be shown, not hide the designs: each draft has valid template data
+    for (const draft of result.drafts) {
+      expect(draft.look).toBeDefined();
+      expect(draft.skeleton).toBeDefined();
+      expect(draft.blocks).toBeDefined();
+      expect(draft.theme).toBeDefined();
+      expect(draft.score).toBeGreaterThan(0);
+    }
+
+    // 3. result.issues contains UNKNOWN_ROLE_ID
+    expect(result.issues).toBeDefined();
+    const roleIssues = result.issues.filter((i) => i.code === "UNKNOWN_ROLE_ID");
+    expect(roleIssues.length).toBeGreaterThan(0);
+    expect(roleIssues[0].severity).toBe("error");
+    expect(roleIssues[0].message).toContain("P-BOSS");
+    expect(roleIssues[0].message).toContain("boss");
+  });
 });
+
+
 
 

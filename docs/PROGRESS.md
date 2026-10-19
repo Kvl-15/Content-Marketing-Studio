@@ -132,6 +132,47 @@
     - Added `stroke` and `strokeWidth` to `RectBlockElement` and `RectNode`.
     - Approved font pairing replacements: Source Serif 4 + Source Sans 3 as the static editorial pairing.
 
+- Task E1: Export settings schema and print-sheet layout (pure code) (19 October 2026)
+  - Files: `core/exportSettings.js`, `core/sheet.js`, `core/sheet.test.js`, `core/index.js`, `scripts/preview-sheet.js`, `docs/PROGRESS.md`.
+  - 22 unit tests passed in `core/sheet.test.js` (total 202 tests passing across 13 test files via `npx vitest run`).
+  - The 8-vs-9 card finding:
+    - KB 13.3 & 16.1 assumed a landscape CR80 card (85.6 mm wide x 54 mm tall, with 3 mm bleed yielding 91.6 x 60 mm cells), calculating 2 cols x 4 rows = 8 cards on A4.
+    - Our event cards are portrait CR80 (54 mm wide x 85.6 mm tall, with 3 mm bleed yielding 60 x 91.6 mm cells). With 5 mm margin and 4 mm gap, this fits 3 cols x 3 rows = 9 cards per page on A4 (actual margins: 11.0 mm X, 7.1 mm Y).
+  - Chosen defaults and rationale:
+    - `paper`: "A4" (210 x 297 mm international standard).
+    - `card`: 54 x 85.6 mm (portrait CR80).
+    - `bleedMm`: 3 mm (creates 60 x 91.6 mm cells).
+    - `marginMm`: 5 mm (enables full 3x3 imposition on A4).
+    - `gapMm`: 4 mm (guarantees space between bleed boxes so vector crop marks never overlap or enter bleed).
+    - `cropMarks`: true for sheets mode (false otherwise).
+    - `markLengthMm`: 2 mm; `markOffsetMm`: 3 mm (starts exactly at bleed edge, reaches 5 mm from trim; adjacent marks meet at center across 10 mm trim-to-trim distance without collision).
+    - `markStrokeMm`: 0.35 mm (print-safe, >= 0.3 mm).
+  - Features delivered:
+    - Zod schema `ExportSettings` with strict rejection of NaN, Infinity, negative, zero, extra keys, and unknown enums.
+    - `parseExportSettings` applying paper dimensions, auto-swapping dimensions on landscape orientation, and resolving crop mark defaults.
+    - Pure `sheetLayout` returning pages, cells (with `xMm`, `yMm`, `trimBox`, `bleedBox`), and deduplicated vector crop marks.
+    - Duplex support: mirrors column order on back pages ($c_{\text{back}} = \text{cols} - 1 - c$) so front and back cards align.
+    - Role grouping (`groupByRole`): cards of the same role stay together; partly filled last pages do not mix roles.
+    - `printerSafeMm`: Configurable minimum distance (0 to 20 mm, default 5 mm). Warns with `MARKS_NEAR_PAGE_EDGE` if any crop mark or bleed box is closer than `printerSafeMm` to a page edge. On default A4, real smallest distance is 5.1 mm (top and bottom crop mark tips).
+    - `duplexFlip`: `"long" | "short"` (default `"long"`). `"long"` mirrors columns ($c_{\text{back}} = \text{cols} - 1 - c$); `"short"` mirrors rows ($r_{\text{back}} = \text{rows} - 1 - r$).
+    - `MARK_OFFSET_BELOW_BLEED`: Warns when `markOffsetMm < bleedMm` so crop marks do not start inside the bleed area.
+    - Separate unit tests in `core/exportSettings.test.js` (NaN, Infinity, negatives, extra keys, unknown enums, dpi 71/1201, bleedMm 11, custom paper without dimensions, landscape swap, and A3 layout with 16 cards/page arithmetic).
+    - Visual preview script `scripts/preview-sheet.js` generating `sheet-preview.html` with unitless SVG numbers, interactive badge toggle, fixed role fixture, and strict assertion verifying card label matches role.
+  - 215 tests passed across 14 test files (`npx vitest run`).
+
+- Task R1: Unknown role must be an error, never a silent default (19 October 2026)
+  - Files: `core/schemas.js`, `core/render.js`, `core/validate.js`, `core/composer.js`, `core/fixtures.js`, `core/validate.test.js`, `core/renderCard.test.js`, `core/composer.test.js`, `scripts/preview-sheet.js`, `scripts/preview-unknown-role.js`.
+  - Removed silent fallbacks in `core/render.js` ("PARTICIPANT" and default blue `#2563EB`).
+  - Unresolvable role now renders neutral slate-gray `#6B7280` pill/bar with text `"UNKNOWN ROLE"` (4.56:1 contrast against white text, WCAG AA compliant).
+  - Added `UNKNOWN_ROLE_ID` error issue in `core/validate.js` when `person.roleId` is missing, empty, not a string, or not found in `event.roles` (exact, case-sensitive matching). Message includes person ID and bad value.
+  - Registered `UNKNOWN_ROLE_ID` in `IssueCode` enum in `core/schemas.js` (additive only).
+  - Preserved `validate(scene)` without context so standalone scene validation still works and skips the role check.
+  - Updated `composeDrafts` in `core/composer.js`: data errors like `UNKNOWN_ROLE_ID` do not hide designs. When a sampled person has `roleId: "boss"`, 3 drafts are still returned with the bad data visible on the card, and `result.issues` surfaces `UNKNOWN_ROLE_ID`.
+  - Aligned fixtures in `core/fixtures.js`: added `"organizer"` and `"volunteer"` to `sampleEventSpec.roles` so valid stress tests pass.
+  - Standardized `scripts/preview-sheet.js` to use canonical `EventSpec` structure `{ ...sampleEventSpec, roles: [...] }`.
+  - Created `scripts/preview-unknown-role.js` demonstrating card with `roleId: "boss"` rendering `"UNKNOWN ROLE"` and blocking D-09 export gate.
+  - 227 tests passed across 14 test files (`npx vitest run`).
+
 ## In progress
 - Physical print test: print `card.svg` on a real printer to verify physical dimensions, margin, and logo sizes (from Task 3).
 
@@ -144,7 +185,7 @@
 - Planned later: two-sided cards (card sides: front or both).
 
 ## Next
-- Review spike gallery `drafts.html` with user; upon approval, update knowledge base and refine archetypes/scoring.
+- Awaiting review of Task R1 (unknown role error handling and validation).
 
 ## Decisions and open questions
 - D-17: layouts are pre-made; never drawn by AI.
@@ -187,7 +228,7 @@
 - Provisional Decision: Dynamic Look Composition Spike (18 October 2026):
   1. Looks are composed per Generate from parameterised generators; seed stored with each draft; rendering deterministic. KB update pending until the spike gallery is approved.
   2. Added additive optional fields: `Look.seed` and `Look.attributes.archetype` in `schemas.js` (Person B and Person C informed).
-- Published Core Function Signatures (updated 18 October 2026):
+- Published Core Function Signatures (updated 19 October 2026):
   - `renderCard(input)` -> `{ svg, scene, issues, fixes }`
   - `autofix({ ...input, scene, issues })` -> `{ scene, issues, fixes }`
   - `validate(scene, context?)` -> `issues`
@@ -196,3 +237,5 @@
   - `compose(event, seed)` -> `{ skeleton, blocks, theme, look }`
   - `composeDrafts(event, options)` -> `[ { draft, seed, look, ... } ]`
   - `scoreQuality(look, scene, context)` -> `{ total, breakdown, pass }`
+  - `parseExportSettings(input)` -> `ExportSettings`
+  - `sheetLayout(settings, cards)` -> `{ pages, perPage, cols, rows, warnings }`

@@ -647,4 +647,84 @@ describe("core/validate", () => {
       expect(warnings[0].nodeId).toBe("photo");
     });
   });
+
+  // 16. UNKNOWN_ROLE_ID validation checks (Task R1)
+  describe("UNKNOWN_ROLE_ID check", () => {
+    const validPerson = {
+      id: "HX26-P-001",
+      name: "Valid Person",
+      roleId: "participant",
+    };
+
+    it("accepts a valid matching roleId without errors", () => {
+      const issues = validate([], { person: validPerson, event: sampleEventSpec });
+      const roleIssues = issues.filter((i) => i.code === "UNKNOWN_ROLE_ID");
+      expect(roleIssues).toHaveLength(0);
+    });
+
+    it("rejects missing roleId with UNKNOWN_ROLE_ID error containing person id and bad value", () => {
+      const personMissingRole = { id: "P-NO-ROLE", name: "No Role" };
+      const issues = validate([], { person: personMissingRole, event: sampleEventSpec });
+      const roleIssues = issues.filter((i) => i.code === "UNKNOWN_ROLE_ID");
+      expect(roleIssues).toHaveLength(1);
+      expect(roleIssues[0].severity).toBe("error");
+      expect(roleIssues[0].message).toContain("P-NO-ROLE");
+      expect(roleIssues[0].message).toContain("undefined");
+    });
+
+    it("rejects empty string roleId with UNKNOWN_ROLE_ID error", () => {
+      const personEmptyRole = { id: "P-EMPTY", name: "Empty Role", roleId: "" };
+      const issues = validate([], { person: personEmptyRole, event: sampleEventSpec });
+      const roleIssues = issues.filter((i) => i.code === "UNKNOWN_ROLE_ID");
+      expect(roleIssues).toHaveLength(1);
+      expect(roleIssues[0].severity).toBe("error");
+      expect(roleIssues[0].message).toContain("P-EMPTY");
+    });
+
+    it("rejects null roleId with UNKNOWN_ROLE_ID error", () => {
+      const personNullRole = { id: "P-NULL", name: "Null Role", roleId: null };
+      const issues = validate([], { person: personNullRole, event: sampleEventSpec });
+      const roleIssues = issues.filter((i) => i.code === "UNKNOWN_ROLE_ID");
+      expect(roleIssues).toHaveLength(1);
+      expect(roleIssues[0].severity).toBe("error");
+      expect(roleIssues[0].message).toContain("null");
+    });
+
+    it("rejects number roleId with UNKNOWN_ROLE_ID error", () => {
+      // @ts-expect-error
+      const personNumRole = { id: "P-NUM", name: "Num Role", roleId: 123 };
+      const issues = validate([], { person: personNumRole, event: sampleEventSpec });
+      const roleIssues = issues.filter((i) => i.code === "UNKNOWN_ROLE_ID");
+      expect(roleIssues).toHaveLength(1);
+      expect(roleIssues[0].severity).toBe("error");
+      expect(roleIssues[0].message).toContain("123");
+    });
+
+    it("rejects unknown roleId with UNKNOWN_ROLE_ID error", () => {
+      const personUnknownRole = { id: "P-UNKNOWN", name: "Unknown Role", roleId: "boss" };
+      const issues = validate([], { person: personUnknownRole, event: sampleEventSpec });
+      const roleIssues = issues.filter((i) => i.code === "UNKNOWN_ROLE_ID");
+      expect(roleIssues).toHaveLength(1);
+      expect(roleIssues[0].severity).toBe("error");
+      expect(roleIssues[0].message).toContain("P-UNKNOWN");
+      expect(roleIssues[0].message).toContain("boss");
+    });
+
+    it("rejects wrong-case roleId ('Organizer' when role id is 'organizer')", () => {
+      const personWrongCase = { id: "P-CASE", name: "Case Role", roleId: "Organizer" };
+      const issues = validate([], { person: personWrongCase, event: sampleEventSpec });
+      const roleIssues = issues.filter((i) => i.code === "UNKNOWN_ROLE_ID");
+      expect(roleIssues).toHaveLength(1);
+      expect(roleIssues[0].severity).toBe("error");
+      expect(roleIssues[0].message).toContain("Organizer");
+    });
+
+    it("validate(scene) without context still passes and skips role check", () => {
+      const scene = [{ type: "rect", id: "bg", box: { x: 0, y: 0, w: 54, h: 85.6 }, fill: "#FFFFFF", decor: true }];
+      const issues = validate(scene);
+      const roleIssues = issues.filter((i) => i.code === "UNKNOWN_ROLE_ID");
+      expect(roleIssues).toHaveLength(0);
+    });
+  });
 });
+

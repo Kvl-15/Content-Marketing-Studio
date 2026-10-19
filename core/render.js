@@ -118,10 +118,10 @@ export function renderCard(input) {
   const widthMm = input.card?.widthMm ?? (isLandscape ? skeleton.size.h : skeleton.size.w);
   const heightMm = input.card?.heightMm ?? (isLandscape ? skeleton.size.w : skeleton.size.h);
 
-  // 1. Resolve role details from event
+  // 1. Resolve role details from event (D-09: No fabricated fallbacks)
   const roleMatch = event?.roles?.find((/** @type {any} */ r) => r.id === person.roleId);
-  const roleLabel = roleMatch?.label || person.roleId?.toUpperCase() || "PARTICIPANT";
-  const roleColor = roleMatch?.color?.value || "#2563EB";
+  const roleLabel = roleMatch ? roleMatch.label : "UNKNOWN ROLE";
+  const roleColor = roleMatch?.color?.value || "#6B7280";
 
   // 2. Resolve or derive theme colors (D-24)
   const palette =

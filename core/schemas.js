@@ -441,6 +441,7 @@ export const IssueCode = z.enum([
   "PHOTO_LOW_RES",
   "NO_PHOTO",
   "EVENT_NAME_DOES_NOT_FIT",
+  "UNKNOWN_ROLE_ID",
 ]);
 
 /**
