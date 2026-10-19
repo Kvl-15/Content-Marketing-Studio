@@ -12,6 +12,8 @@
     "core"
   ],
   "scripts": {
+    "dev": "npm run dev --workspace=@acm-studio/client",
+    "build": "npm run build --workspace=@acm-studio/client",
     "test": "npm run test --workspace=@acm-studio/core",
     "lint": "eslint .",
     "format": "prettier --write .",
