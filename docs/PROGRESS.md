@@ -1,6 +1,7 @@
 # Progress log
 
 ## How to update this file
+
 - After every task, update this file yourself. Do not wait for me to ask.
 - Move finished items to Done, with the date and the files involved.
 - Keep In progress accurate: what is half-finished, what is known to be broken or unverified.
@@ -9,6 +10,7 @@
 - Be honest: only mark something Done if its tests pass. Say how you checked.
 
 ## Done
+
 - Task 1: Schemas (16 October 2026)
   - Files: `core/schemas.js`, `core/fixtures.js`, `core/schemas.test.js`.
   - 39 tests passed verifying all 12 schemas against good and bad inputs.
@@ -19,7 +21,7 @@
 - Task 3: First real vertical slice of renderCard (16 October 2026)
   - Files: `core/templateData.js`, `core/render.js`, `core/renderCard.test.js`, `scripts/preview-card.js`.
   - Implemented template data for portrait skeleton, blocks, theme, and look.bold.
-  - Rendered scene nodes   and SVG with role resolution, XML escaping, and logo/photo placeholders.
+  - Rendered scene nodes and SVG with role resolution, XML escaping, and logo/photo placeholders.
   - 6 unit tests passed in `core/renderCard.test.js`.
 - Task 4: Text measuring, wrapping and fitting (17 October 2026)
   - Files: `core/text.js`, `core/render.js`, `core/schemas.js`, `core/templateData.js`, `core/index.js`, `core/text.test.js`, `core/renderCard.test.js`, `scripts/preview-card.js`.
@@ -196,12 +198,25 @@
   - Additive sheet boxes (Condition 6): Returned object additively exposes `trimBox: { x: 0, y: 0, w: 54, h: 85.6 }` (card-local, origin 0,0) and `bleedBox: { x: bleedMm === 0 ? 0 : -bleedMm, y: bleedMm === 0 ? 0 : -bleedMm, w: 54 + 2*bleedMm, h: 85.6 + 2*bleedMm }`, matching `SheetCell` box field names in `core/sheet.js`.
   - Visual preview overlay (Condition 7): Added `--bleed` CLI flag to `scripts/preview-drafts.js`. In `--bleed` mode, cards render with `bleedMm: 3` and superimpose an HTML/CSS dashed green trim line (`.trim-overlay`, 1.5px dashed #22C55E) directly positioned against the SVG's own box without round-corner clipping. Without `--bleed`, the output is 100% identical as before.
   - Tests: 10 new unit tests in `core/bleed.test.js` covering all 4 archetypes x 3 modes, scene node deep-equality, viewBox/size for bleed 0/1/3/10, golden SVG byte-identity, validator parity, invalid bleed inputs, determinism, 57-char names, decor: true flag only, and trim-touching non-decor safe margin.
-  - Exact test count: 249 tests passing across 15 test files (`npx vitest run`).
+- Task E2a: Single-card export (SVG and PNG, plus the D-09 gate) (20 October 2026)
+  - Files: `server/export/gate.js`, `server/export/fileName.js`, `server/export/exportCard.js`, `server/export/index.js`, `server/export/export.test.js`, `scripts/export-demo.js`, `package.json`, `package-lock.json`, `docs/PROGRESS.md`.
+  - D-09 Gate (`checkExportGate`): Pre-export validation gate that fails closed (refuses if issues is not an array). Any `error` issue (e.g. `UNKNOWN_ROLE_ID`) unconditionally refuses export. Any `warning` issue (e.g. `OUTSIDE_SAFE_MARGIN`, `ELEMENT_DROPPED`, `NO_PHOTO`) refuses export unless `acknowledgedWarnings: true`. Refused exports return `{ ok: false, issues, errors, warnings, reason }` and write zero bytes to disk.
+  - Privacy-preserving Filenames (`fileNameFor` & `uniqueFileNames`): Generates filenames strictly from `person.id` (no fallback to names/emails, enforcing D-10). Sanitises slashes to hyphens (`a/b` -> `a-b`), strips path traversal (`..`), invalid Windows characters, control characters, and trailing dots/spaces. Guards Windows reserved device names with extension (`CON.svg` -> `card-CON.svg`). Caps base length at 64 chars. Deterministic batch helper `uniqueFileNames` adds `-2`, `-3` on collisions, treating names case-insensitively.
+  - Single-Card Export (`exportCard`): Integrates with `core/render.js` and `core/exportSettings.js` schema (`format`, `card`, `bleedMm`, `dpi`, `orientation`). Returns `{ ok, fileName, mimeType, data, ... }`.
+    - SVG format: Generates UTF-8 SVG string with XML declaration (`<?xml version="1.0" encoding="UTF-8"?>\n`), exact mm dimensions and viewBox (`-3 -3 60 91.6` at bleed 3), no `<text>` or `font-family` attributes (D-28), 100% byte-identical across runs. When brand has logo assets and fonts are provided, SVG embeds `<image>` elements with data URIs and `<path>` text outlines (~360 KB on real card).
+    - PNG format: Rasterises SVG using `sharp` at target DPI with `limitInputPixels: false` (tested up to 1200 DPI). Pixel size matches $\text{Math.round}(\text{mm} / 25.4 \times \text{DPI})$. Verified corner pixel in bleed margin matches background/decor colour in all three modes (light, dark, colour-field), image has > 5 distinct colours (content rendered, differs from no-logos card), and output buffers are 100% byte-identical.
+    - Asset preflight checks: `exportCard` strictly refuses export (`ok: false`, writes zero bytes) if `input.fonts` (heading and body opentype fonts) is missing or if any brand kit logo is missing loaded image data (`dataUri`, `width`, `height`), preventing blank text outlines or placeholder logo rects from exporting.
+    - Unsupported formats & orientation: Format `"pdf"` returns a clear error stating it is deferred to Task E2b. Landscape orientation is refused with a clear message because card layouts are portrait-only and do not re-flow for a landscape canvas (deferred to Stage B). Invalid settings return Zod schema error unchanged.
+  - Demo script (`scripts/export-demo.js`): Exports 1 card for 3 roles (`participant`, `mentor`, `organizer`) to `exports/` in both SVG and PNG at 300 DPI (bleed 3mm). Loads opentype fonts and brand kit `"test-logos"` (embedded JPEG data URIs). Demonstrates D-09 gate refusal with unknown role (`roleId: "boss"`), writing no file to disk.
+  - Tests: 31 unit tests in `server/export/export.test.js` covering gate fail-closed, role errors, warnings ack, zero file writing, filename sanitisation/reserved names/traversal, asset preflight checks (missing fonts, unpopulated logo assets), SVG structure/dimensions/D-28, landscape refusal, non-empty card checks (image count, PNG differing without logos, >5 colours), and PNG rasterisation/density/corners/determinism at 72, 300, 600, 1200 DPI across all 3 modes (light mode sampled 3 px inside corner at (3, 3) matching role-bar fill #2563EB).
+  - 280 tests passed across 16 test files (`npx vitest run`).
 
 ## In progress
+
 - Physical print test: print `card.svg` on a real printer to verify physical dimensions, margin, and logo sizes (from Task 3).
 
 ## Direction change
+
 - This is a long-term product for the club, not a hackathon demo.
 - Task D1 (rendering foundations: text as outlines D-28, logo plate D-29, silhouette and initials placeholders) is done. The design rework tasks D2 to D5 are DEFERRED. The six current looks are provisional "Templates v0" (Formal and Tech are the keepers; Bold, Minimal, Editorial and Playful are usable but provisional). We build with them.
 - Later plan: AI-generated designs; if not good, add more hand-made design parts. If the AI is used, it should write looks in our JSON format, not raw SVG, and every AI design must pass schema, stress test and a gallery review before it is saved as a template. D-17 stays until then.
@@ -210,9 +225,11 @@
 - Planned later: two-sided cards (card sides: front or both).
 
 ## Next
-- Task B2: Two-sided card layout support or Stage B layout rebuild. Awaiting user instruction.
+
+- Task E2b: Multi-card and print-sheet export (PDF via Puppeteer, print sheets, ZIP bundle).
 
 ## Decisions and open questions
+
 - D-17: layouts are pre-made; never drawn by AI.
 - D-19: schemas and function signatures frozen in week 1.
 - D-20: Text fitting algorithm order (17 October 2026):
@@ -262,7 +279,15 @@
   2. Bleed is applied exclusively when emitting SVG; returned `scene` remains in trim coordinates (0..54 by 0..85.6) and is strictly deep-equal with and without bleed.
   3. Decor shapes are identified exclusively by `node.decor === true` (never matching id "bg"). Decor rects touching or crossing trim boundaries extend outward by `bleedMm` on that edge in SVG. Non-decor elements are never extended into bleed.
   4. `renderCard` returns additive `trimBox`, `bleedBox`, and `bleedMm` matching `SheetCell` naming convention in `core/sheet.js`.
-- Published Core Function Signatures (updated 20 October 2026):
+- D-41: Use sharp for single-card PNG rasterisation (approved by user, 20 October 2026):
+  1. Use `sharp` (libvips + librsvg) for rasterising card SVG to PNG at target DPI (72..1200 DPI).
+  2. Honest engineering rationale:
+     - No browser launch overhead per PNG export.
+     - Deterministic output on one platform (byte-identical across runs).
+     - Physical DPI density metadata (`pHYs` chunk) written directly into the PNG header.
+     - Text is already rendered as `<path>` outlines by `core/render.js` (D-28), eliminating OS/browser font discovery and font loading discrepancies.
+  3. Known limitation: PNG is rendered via librsvg in Sharp, while PDF will be rendered via Chromium in Puppeteer (Task E2b). Because their SVG rasterisation engines differ, minor subpixel rendering differences may exist between PNG and PDF outputs; we will compare them once in E2b.
+- Published Core & Server Function Signatures (updated 20 October 2026):
   - `renderCard(input)` -> `{ svg, scene, issues, fixes, trimBox, bleedBox, bleedMm }`
   - `autofix({ ...input, scene, issues })` -> `{ scene, issues, fixes }`
   - `validate(scene, context?)` -> `issues`
@@ -273,3 +298,7 @@
   - `scoreQuality(look, scene, context)` -> `{ total, breakdown, pass }`
   - `parseExportSettings(input)` -> `ExportSettings`
   - `sheetLayout(settings, cards)` -> `{ pages, perPage, cols, rows, warnings }`
+  - `exportCard(input, settings, options)` -> `Promise<{ ok, fileName, mimeType, data, widthPx, heightPx, dpi, issues, errors, warnings, reason }>`
+  - `checkExportGate(issues, options)` -> `{ ok, issues, errors, warnings, reason }`
+  - `fileNameFor(person, format, index)` -> `string`
+  - `uniqueFileNames(people, format)` -> `string[]`
