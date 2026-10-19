@@ -94,6 +94,39 @@ describe("cleaning, roles, and IDs", () => {
     expect(a.issues.filter((issue) => issue.code === DUPLICATE_ID)).toHaveLength(0);
     expect(ROW_ISSUES.UNKNOWN_ROLE_ID).toBe(UNKNOWN_ROLE_ID);
   });
+
+  it("reserves imported IDs before generating IDs, including shared role letters", () => {
+    const input = [
+      { id: "HX26-P-001", roleId: "participant" },
+      { id: "", roleId: "participant" },
+      { id: "hx26-p-003", roleId: "participant" },
+      { id: "", roleId: "participant" },
+      { id: "", roleId: "presenter" },
+      { id: "", roleId: "participant" },
+      { id: "HX26-001", roleId: "participant" },
+      { id: "HX26-P-001", roleId: "mentor" },
+      { id: "", roleId: "participant" },
+      { id: "", roleId: "participant" },
+    ];
+    const first = assignDeterministicIds(input, { eventCode: "HX26" });
+    const second = assignDeterministicIds(input, { eventCode: "HX26" });
+
+    expect(first.rows.map((row) => row.id)).toEqual([
+      "HX26-P-001",
+      "HX26-P-002",
+      "hx26-p-003",
+      "HX26-P-004",
+      "HX26-P-005",
+      "HX26-P-006",
+      "HX26-001",
+      "HX26-P-001",
+      "HX26-P-007",
+      "HX26-P-008",
+    ]);
+    expect(first.rows.map((row) => row.id)).toEqual(second.rows.map((row) => row.id));
+    expect(first.issues.filter((issue) => issue.code === DUPLICATE_ID)).toHaveLength(2);
+    expect(new Set(first.rows.filter((row, index) => !input[index].id).map((row) => row.id)).size).toBe(6);
+  });
 });
 
 describe("dataset integration", () => {

@@ -12,6 +12,7 @@ Branch: `feature/a2-data`
 - Added NFC cleaning, trimming, whitespace collapsing, control/zero-width removal reporting, and formula-like cell counting.
 - Added exact case-insensitive role resolution against event roles. Missing, empty, and unknown roles produce `UNKNOWN_ROLE_ID` errors.
 - Added stable IDs using event code, role letter, and running number. Existing IDs are preserved; duplicate IDs are errors and duplicate emails are warnings.
+- IDs from CSV are kept as-is; the convention applies only to generated IDs. Existing IDs are reserved before generation, including case-insensitive matches. `sharp.cache(false)` is process-wide and is set in `server/data/photos.js` inside `processPhoto`; the server and export code must decide on it together.
 - Added ZIP photo ingestion with `yauzl`, traversal checks, entry/size/pixel limits, JPEG/PNG/WebP validation, unsupported/corrupt warnings, ID/email/filename matching, EXIF rotation, sRGB conversion, metadata stripping, JPEG masters, top-biased crops, and effective DPI calculation. The dataset path streams one entry at a time and does not retain all decoded photos.
 - Added HTTPS-only `buildCheckinUrl(id, urlPattern)` with URL-encoded IDs.
 - Added `buildDataset()` with Zod `Person` validation, default error exclusion, row statuses, deterministic reports, unmatched photo/row lists, optional processed-photo output, QR URLs, and formula-like-cell totals.

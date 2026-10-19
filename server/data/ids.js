@@ -29,6 +29,11 @@ export function assignDeterministicIds(rows, options = {}) {
   const roleField = options.roleField ?? "roleId";
   const startNumber = options.startNumber ?? 1;
   const generatedByRole = new Map();
+  const reservedIds = new Set();
+  for (const source of rows) {
+    const current = String(source[idField] ?? "").trim();
+    if (current) reservedIds.add(key(current));
+  }
   const result = rows.map((source, index) => {
     const row = { ...source };
     const current = String(row[idField] ?? "").trim();
@@ -36,9 +41,15 @@ export function assignDeterministicIds(rows, options = {}) {
       row[idField] = current;
     } else {
       const role = roleLetter(row[roleField]);
-      const next = (generatedByRole.get(role) ?? startNumber - 1) + 1;
+      let next = (generatedByRole.get(role) ?? startNumber - 1) + 1;
+      let generatedId = `${safeCode(options.eventCode)}-${role}-${String(next).padStart(3, "0")}`;
+      while (reservedIds.has(key(generatedId))) {
+        next += 1;
+        generatedId = `${safeCode(options.eventCode)}-${role}-${String(next).padStart(3, "0")}`;
+      }
       generatedByRole.set(role, next);
-      row[idField] = `${safeCode(options.eventCode)}-${role}-${String(next).padStart(3, "0")}`;
+      row[idField] = generatedId;
+      reservedIds.add(key(generatedId));
     }
     row.__sourceRowNumber = index + 1;
     return row;
