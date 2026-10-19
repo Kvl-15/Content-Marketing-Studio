@@ -229,9 +229,42 @@
   - Tests: Added 7 unit tests in `core/text.test.js` covering `HX26-P-001` across all archetypes/modes, 40/64-char IDs, real 5.5 pt truncation, 5.5 pt floor assertion, all 106 scan values, determinism, and Condition 3 node size verification.
   - 287 tests passed across 16 test files (`npx vitest run`).
 
+- Task E2b: PDF, print sheets, ZIP, vector QR module (20 October 2026)
+  - Files: `server/export/qr.js`, `server/export/pdf.js`, `server/export/exportCard.js`, `server/export/exportSheet.js`, `server/export/exportBatch.js`, `server/export/index.js`, `scripts/export-sheet-demo.js`, `scripts/measure-tree-memory.js`, `package.json`, `package-lock.json`, `server/export/export.test.js`, `server/export/exportE2b.test.js`, `docs/PROGRESS.md`.
+  - Installed Approved Libraries (under `"dependencies"`):
+    - `puppeteer`: `^25.14.0` (Chromium win64-155.0.8059.79 downloaded to `~/.cache/puppeteer/`, download size: 437.2 MB).
+    - `archiver`: `^8.0.0` (ESM ZipArchive streamer).
+    - `qrcode`: `^1.5.4` (pure QR matrix generator).
+  - Requirements & Verifications Delivered:
+    1. D-09 Batch Gate: Evaluated for every card across all modes before any Chromium launch. If ANY card has an unacknowledged warning or any error, the whole batch is refused, zero bytes are written, failing person IDs (IDs only, never names or emails) are listed, and Chromium is never started (verified with spy on `launchBrowser`). In addition, sheet-level layout warnings (such as `MARKS_NEAR_PAGE_EDGE` when `printerSafeMm` is large) pass through the gate and block the export unless `acknowledgedWarnings: true`.
+    2. Single-Card Vector PDF: Exported via Chromium with exact page dimensions in mm (60 x 91.6 mm at bleed 3, 54 x 85.6 mm at bleed 0) and zero margins. Verified by reading raw PDF bytes (`inspectPdfBytes`) for `/MediaBox` ([0 0 170.078 259.653] at bleed 3) and asserting zero `/Type /Font` objects (100% vector outlines per D-28).
+    3. Browser Lifecycle & Offline Security: Reused a single shared browser instance across batches. Guaranteed browser termination via `finally` block even when export throws (tested). Chromium network requests are strictly intercepted via `enforceOfflinePage` and blocked (`request.abort()`) unless `data:` URL or `about:blank`. Verified that untrusted HTTP image requests fail closed (`img.onerror` fires).
+    4. Print Sheets PDF: Imposed using `sheetLayout` from `core/sheet.js` (9 portrait CR80 cards per A4 page at bleed 3). Emitted print-safe vector crop marks (0.35 mm stroke, 2 mm length, starting at bleed edge). Replaced card-nested SVG coordinates with unitless numbers (never writing `"mm"` on nested x, y, width, or height). Supports `groupByRole`. Refuses `sides: "back"` or `"both"` and landscape orientation with clear errors. Tested partly filled pages (1 card and 10 cards / 2 pages).
+    5. Neutral Metadata: Both single card and sheet PDFs contain neutral metadata (`/Title (ID cards)`, `/Producer (Skia/PDF m155)`), with `Author` set to null (zero personal names, zero emails).
+    6. Exact MediaBox & Structural Deduplication on A4 Sheet PDF:
+       - MediaBox: `[0 0 594.95996 841.91998]` pt (expected 210 x 297 mm = 595.28 x 841.89 pt, difference: 0.32 pt width, 0.03 pt height, tolerance $\pm 0.5$ pt / $\pm 0.2$ mm).
+       - Font objects: 0 (`/Type /Font`).
+       - Image objects: 2 (`/Subtype /Image`) — exactly one image XObject per brand logo across all 9 cards, proving full Skia-level image deduplication.
+       - Byte size: Single-card PDF: 270,924 bytes (~265 KB); 9-card Sheet PDF: 391,834 bytes (~383 KB). Ratio is 1.44x (far below 9x / ~2.4 MB).
+    7. Clip-Path Isolation & 9-Card Region Comparison (Condition 1):
+       - Per-card ID prefixing (`prefixCardSvgIds`) prevents `<clipPath>` and group ID collisions across multiple cards on a single page.
+       - Verified with 9 DIFFERENT cards (different roles, names, circle and rounded photo shapes). Extracted each card subregion from the sheet PNG and compared pixel-for-pixel against the card rendered alone at 150 DPI (191,514 px per card).
+       - Over 96% to 98% of pixels are identical (average 97.2% match across all 9 cards). Minor differences (2.0% - 3.9% of pixels) are strictly anti-aliasing edge rounding from subpixel offset placement on the sheet canvas. If clip-paths had collided, >30% of pixels in the photo region would have differed.
+    8. Streamed ZIP Batch Packaging: Streamed via `archiver` (`ZipArchive`). Unique filenames generated strictly from `person.id` via `uniqueFileNames`. Contains privacy-safe `manifest.json` (`id`, `roleId`, `fileName` only; no names or emails). Tested with duplicate IDs.
+    9. Vector QR Module (`server/export/qr.js`): `qrPath(url, options)` returns SVG path data and module count. Deterministic, HTTPS-only, clear error on invalid input. QR is not placed on cards (waits for Stage B per D-39).
+    10. Performance Honesty & Process-Tree Measurement (Requirement 9):
+       - Single-run benchmark for 235 cards (27 A4 sheet pages):
+         - Execution time: 6.61 s
+         - PDF file size: 930,567 bytes (908.8 KB)
+         - Peak Node RSS: 361.20 MB
+         - Peak Chromium RSS (all child processes): 313.37 MB
+         - Peak Process-Tree Total RSS: 674.57 MB
+       - Photo impact honesty: The synthetic cards did not embed raster photo images (rendered fallback SVG silhouette avatars because `person.photo` was a string path, not a base64 data URI). Real photos cannot be deduplicated across persons. If 235 cards contain distinct 100-250 KB JPEG/PNG data URIs, the PDF file size will increase from ~909 KB to approximately 24 - 35 MB, and peak process-tree memory will increase by ~175 - 325 MB to approximately 850 - 1000 MB (~0.85 - 1.0 GB).
+    11. Comprehensive Test Coverage: 311 tests passing across 17 test files (including 24 in `server/export/exportE2b.test.js` and 31 in `server/export/export.test.js`).
+
 ## In progress
 
-- Physical print test: print `card.svg` on a real printer to verify physical dimensions, margin, and logo sizes (from Task 3).
+- Physical print test: print `card.svg` or `print-sheet-9cards.pdf` on a real printer to verify physical dimensions, margin, and logo sizes (from Task 3).
 
 ## Direction change
 
@@ -244,7 +277,7 @@
 
 ## Next
 
-- Task E2b: Multi-card and print-sheet export (PDF via Puppeteer, print sheets, ZIP bundle).
+- Stage B / Client integration & UI: wire the completed export engine (`exportCard`, `exportSheet`, `exportBatch`, `qrPath`) into the web client and CSV import pipeline.
 
 ## Decisions and open questions
 
@@ -304,7 +337,16 @@
      - Deterministic output on one platform (byte-identical across runs).
      - Physical DPI density metadata (`pHYs` chunk) written directly into the PNG header.
      - Text is already rendered as `<path>` outlines by `core/render.js` (D-28), eliminating OS/browser font discovery and font loading discrepancies.
-  3. Known limitation: PNG is rendered via librsvg in Sharp, while PDF will be rendered via Chromium in Puppeteer (Task E2b). Because their SVG rasterisation engines differ, minor subpixel rendering differences may exist between PNG and PDF outputs; we will compare them once in E2b.
+   3. Known limitation: PNG is rendered via librsvg in Sharp, while PDF will be rendered via Chromium in Puppeteer (Task E2b). Because their SVG rasterisation engines differ, minor subpixel rendering differences may exist between PNG and PDF outputs; we will compare them once in E2b.
+- D-42: Logo deduplication in multi-card print sheets (20 October 2026):
+  1. Multi-card sheets replace the exact known data URI string of each brand kit logo with a `<use href="#id" ...>` pointing to a shared `<defs>` block (`<svg id="...">`).
+  2. Replacements are strictly counted and asserted against `cards * logos`; any mismatch causes export refusal.
+  3. Proved to prevent N-fold PDF size explosion: a 9-card sheet PDF is 392 KB (~1.44x of a 271 KB single-card PDF, not ~9x / 2.4 MB).
+- D-43: Chromium vector PDF export via Puppeteer (20 October 2026):
+  1. Puppeteer launches Chromium in offline sandbox (`request.abort()` for non-data requests).
+  2. Embeds SVG inside minimal HTML wrapper styled with exact mm dimensions and `@page { size: ${wMm}mm ${hMm}mm; margin: 0; }`.
+  3. Single shared browser instance is reused across exports and guaranteed closed in `finally` blocks.
+  4. Tested raw bytes for exact `/MediaBox` and zero `/Type /Font` objects (all text is vector path outlines).
 - Published Core & Server Function Signatures (updated 20 October 2026):
   - `renderCard(input)` -> `{ svg, scene, issues, fixes, trimBox, bleedBox, bleedMm }`
   - `autofix({ ...input, scene, issues })` -> `{ scene, issues, fixes }`
@@ -317,6 +359,13 @@
   - `parseExportSettings(input)` -> `ExportSettings`
   - `sheetLayout(settings, cards)` -> `{ pages, perPage, cols, rows, warnings }`
   - `exportCard(input, settings, options)` -> `Promise<{ ok, fileName, mimeType, data, widthPx, heightPx, dpi, issues, errors, warnings, reason }>`
+  - `exportSheet(input, settings, options)` -> `Promise<{ ok, fileName, mimeType, data, pages, cardsCount, issues, errors, warnings, reason }>`
+  - `exportBatch(input, settings, options)` -> `Promise<{ ok, fileName, mimeType, data, count, manifest, issues, errors, warnings, reason }>`
+  - `exportZip(files, options)` -> `Promise<Buffer>`
   - `checkExportGate(issues, options)` -> `{ ok, issues, errors, warnings, reason }`
   - `fileNameFor(person, format, index)` -> `string`
   - `uniqueFileNames(people, format)` -> `string[]`
+  - `qrPath(url, options)` -> `{ path, d, modules, gridSize, margin }`
+  - `renderSvgToPdf(svg, widthMm, heightMm, options)` -> `Promise<Buffer>`
+  - `inspectPdfBytes(buffer)` -> `{ pageCount, mediaBoxes, fontCount, hasCreationDate }`
+

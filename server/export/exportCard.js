@@ -7,6 +7,8 @@ import { renderCard } from "../../core/render.js";
 import { checkExportGate } from "./gate.js";
 import { fileNameFor } from "./fileName.js";
 
+import { renderSvgToPdf } from "./pdf.js";
+
 /**
  * @typedef {import("../../core/exportSettings.js").ExportSettings} ExportSettings
  * @typedef {import("../../core/schemas.js").EventSpec} EventSpec
@@ -15,7 +17,7 @@ import { fileNameFor } from "./fileName.js";
  */
 
 /**
- * Exports a single card to SVG or PNG format with print-accurate dimensions,
+ * Exports a single card to SVG, PNG, or PDF format with print-accurate dimensions,
  * bleed, and D-09 pre-export gate enforcement.
  *
  * @param {{
@@ -32,6 +34,7 @@ import { fileNameFor } from "./fileName.js";
  *   outputPath?: string;
  *   fileName?: string;
  *   index?: number | string;
+ *   browser?: import("puppeteer").Browser;
  * }} [options] - Export execution options
  * @returns {Promise<{
  *   ok: boolean;
@@ -40,6 +43,8 @@ import { fileNameFor } from "./fileName.js";
  *   data?: string | Buffer;
  *   widthPx?: number;
  *   heightPx?: number;
+ *   widthMm?: number;
+ *   heightMm?: number;
  *   dpi?: number;
  *   issues?: any[];
  *   errors?: any[];
@@ -51,25 +56,12 @@ export async function exportCard(input, settingsInput = {}, options = {}) {
   // 1. Parse and validate export settings (Zod schema validation preserved unchanged)
   const settings = parseExportSettings(settingsInput);
 
-  // 2. Format availability check (PDF deferred to E2b)
-  if (settings.format === "pdf") {
-    return {
-      ok: false,
-      issues: [],
-      errors: [
-        {
-          severity: "error",
-          code: "UNSUPPORTED_FORMAT",
-          message:
-            "Format 'pdf' is deferred to Task E2b and is not available in single-card export E2a",
-        },
-      ],
-      warnings: [],
-      reason: "Format 'pdf' is not available until Task E2b",
-    };
-  }
-
-  if (settings.format !== "svg" && settings.format !== "png") {
+  // 2. Format availability check
+  if (
+    settings.format !== "svg" &&
+    settings.format !== "png" &&
+    settings.format !== "pdf"
+  ) {
     return {
       ok: false,
       issues: [],
@@ -207,9 +199,37 @@ export async function exportCard(input, settingsInput = {}, options = {}) {
     };
   }
 
-  // PNG generation using sharp
   const totalWidthMm = settings.card.widthMm + 2 * settings.bleedMm;
   const totalHeightMm = settings.card.heightMm + 2 * settings.bleedMm;
+
+  // PDF generation using Puppeteer
+  if (settings.format === "pdf") {
+    const pdfBuffer = await renderSvgToPdf(rendered.svg, {
+      widthMm: totalWidthMm,
+      heightMm: totalHeightMm,
+      browser: options.browser,
+    });
+
+    if (options.outputPath) {
+      await fs.promises.mkdir(path.dirname(options.outputPath), {
+        recursive: true,
+      });
+      await fs.promises.writeFile(options.outputPath, pdfBuffer);
+    }
+
+    return {
+      ok: true,
+      fileName,
+      mimeType: "application/pdf",
+      data: pdfBuffer,
+      widthMm: totalWidthMm,
+      heightMm: totalHeightMm,
+      issues: rendered.issues,
+      warnings: gateResult.warnings,
+    };
+  }
+
+  // PNG generation using sharp
   const widthPx = Math.round((totalWidthMm / 25.4) * settings.dpi);
   const heightPx = Math.round((totalHeightMm / 25.4) * settings.dpi);
 

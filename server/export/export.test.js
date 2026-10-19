@@ -349,9 +349,27 @@ describe("E2a: Single-Card Export & D-09 Gate", () => {
         fonts: testFonts,
       };
 
-      const result = await exportCard(input, { format: "pdf" });
-      expect(result.ok).toBe(false);
-      expect(result.reason).toContain("Task E2b");
+      const result = await exportCard(input, { format: "pdf", bleedMm: 3 });
+      expect(result.ok).toBe(true);
+      expect(result.mimeType).toBe("application/pdf");
+      expect(Buffer.isBuffer(result.data)).toBe(true);
+      expect(result.data.length).toBeGreaterThan(1000);
+
+      // Verify PDF byte structure directly (MediaBox 60 x 91.6 mm, no embedded fonts)
+      const pdfText = result.data.toString("latin1");
+      expect(pdfText.startsWith("%PDF-")).toBe(true);
+      expect(/\/Type\s*\/Page\b/.test(pdfText)).toBe(true);
+      expect(/\/Type\s*\/Font\b/.test(pdfText)).toBe(false);
+
+      const mediaBoxMatch = pdfText.match(
+        /\/MediaBox\s*\[\s*([0-9.-]+)\s+([0-9.-]+)\s+([0-9.-]+)\s+([0-9.-]+)\s*\]/
+      );
+      expect(mediaBoxMatch).not.toBeNull();
+      const [, x1, y1, x2, y2] = mediaBoxMatch;
+      const wMm = ((parseFloat(x2) - parseFloat(x1)) * 25.4) / 72;
+      const hMm = ((parseFloat(y2) - parseFloat(y1)) * 25.4) / 72;
+      expect(wMm).toBeCloseTo(60, 0.5);
+      expect(hMm).toBeCloseTo(91.6, 0.5);
     });
 
     it("refuses landscape orientation with a clear message (portrait-only layouts)", async () => {
