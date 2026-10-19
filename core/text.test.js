@@ -11,15 +11,22 @@ import {
   sampleBrandKit,
   sampleEventSpec,
 } from "./fixtures.js";
+import { compose } from "./composer.js";
 import { loadContent } from "../scripts/loadContent.js";
 
-const { skeletons, blocks, themes, looks } = loadContent();
+const { skeletons, blocks, themes } = loadContent();
 
 // Load test font from assets/fonts
-const fontPath = resolve(process.cwd(), "assets/fonts/Roboto-VariableFont_wdth,wght.ttf");
+const fontPath = resolve(
+  process.cwd(),
+  "assets/fonts/Roboto-VariableFont_wdth,wght.ttf",
+);
 const fontBuf = readFileSync(fontPath);
 const testFont = opentype.parse(
-  fontBuf.buffer.slice(fontBuf.byteOffset, fontBuf.byteOffset + fontBuf.byteLength)
+  fontBuf.buffer.slice(
+    fontBuf.byteOffset,
+    fontBuf.byteOffset + fontBuf.byteLength,
+  ),
 );
 
 describe("core/text engine", () => {
@@ -57,7 +64,12 @@ describe("core/text engine", () => {
     });
 
     it("wraps a long name into 2 lines at spaces", () => {
-      const lines = wrap("Dr. Anuradha Priyadarshini Mukherjee", 41.4, 3.1752, testFont);
+      const lines = wrap(
+        "Dr. Anuradha Priyadarshini Mukherjee",
+        41.4,
+        3.1752,
+        testFont,
+      );
       expect(lines.length).toBe(2);
       expect(lines[0]).toBe("Dr. Anuradha Priyadarshini");
       expect(lines[1]).toBe("Mukherjee");
@@ -150,7 +162,9 @@ describe("core/text engine", () => {
       expect(res.lines[res.lines.length - 1].endsWith("...")).toBe(true);
       expect(res.sizeMm / PT_TO_MM).toBeGreaterThanOrEqual(6.5);
       for (const line of res.lines) {
-        expect(measure(line, res.sizeMm, testFont)).toBeLessThanOrEqual(boxWidthMm + 0.01);
+        expect(measure(line, res.sizeMm, testFont)).toBeLessThanOrEqual(
+          boxWidthMm + 0.01,
+        );
       }
     });
 
@@ -176,7 +190,9 @@ describe("core/text engine", () => {
         expect(res.lines.length).toBeLessThanOrEqual(2);
         expect(res.sizeMm / PT_TO_MM).toBeGreaterThanOrEqual(6.49);
         for (const line of res.lines) {
-          expect(measure(line, res.sizeMm, testFont)).toBeLessThanOrEqual(boxWidthMm + 0.05);
+          expect(measure(line, res.sizeMm, testFont)).toBeLessThanOrEqual(
+            boxWidthMm + 0.05,
+          );
         }
       }
     });
@@ -199,14 +215,20 @@ describe("core/text engine", () => {
       expect(nameNode).toBeDefined();
       if (nameNode && nameNode.type === "text") {
         expect(nameNode.status).toBe("truncated");
-        expect(nameNode.lines[nameNode.lines.length - 1].endsWith("...")).toBe(true);
+        expect(nameNode.lines[nameNode.lines.length - 1].endsWith("...")).toBe(
+          true,
+        );
         expect(nameNode.sizeMm / PT_TO_MM).toBeGreaterThanOrEqual(6.5);
         for (const line of nameNode.lines) {
-          expect(measure(line, nameNode.sizeMm, testFont)).toBeLessThanOrEqual(nameNode.box.w + 0.01);
+          expect(measure(line, nameNode.sizeMm, testFont)).toBeLessThanOrEqual(
+            nameNode.box.w + 0.01,
+          );
         }
       }
 
-      const truncatedIssue = res.issues.find((i) => i.code === "TEXT_TRUNCATED" && i.nodeId === "name");
+      const truncatedIssue = res.issues.find(
+        (i) => i.code === "TEXT_TRUNCATED" && i.nodeId === "name",
+      );
       expect(truncatedIssue).toBeDefined();
       expect(truncatedIssue?.severity).toBe("warning");
     });
@@ -227,6 +249,232 @@ describe("core/text engine", () => {
       expect(res.issues.length).toBe(0);
       const nameNode = res.scene.find((n) => n.id === "name");
       expect(nameNode?.type === "text" && nameNode.status).toBe("ok");
+    });
+  });
+
+  describe("Task T1: Text-Fitting Step Rounding Fix & Regression Tests", () => {
+    const fonts = {
+      heading: opentype.parse(
+        readFileSync(
+          resolve(process.cwd(), "assets/fonts/SpaceGrotesk-Bold.ttf"),
+        ).buffer,
+      ),
+      body: opentype.parse(
+        readFileSync(resolve(process.cwd(), "assets/fonts/Inter-Regular.ttf"))
+          .buffer,
+      ),
+    };
+
+    const ARCHETYPES = [
+      "hero-photo-top",
+      "colour-block-split",
+      "circle-badge-centre",
+      "typographic-name-first",
+    ];
+    const MODES = ["light", "dark", "colour-field"];
+
+    it("(a) 'HX26-P-001' in real id-line box fits with status 'ok' and no ellipsis across all 4 archetypes x 3 modes", () => {
+      for (const arch of ARCHETYPES) {
+        for (const mode of MODES) {
+          const bundle = compose(sampleEventSpec, "test-seed", arch, mode);
+          const res = renderCard({
+            person: {
+              id: "HX26-P-001",
+              name: "Preet Patel",
+              roleId: "participant",
+              org: "SVNIT",
+            },
+            event: sampleEventSpec,
+            brand: sampleBrandKit,
+            card: sampleEventSpec.card,
+            fonts,
+            skeleton: bundle.skeleton,
+            blocks: bundle.blocks,
+            theme: bundle.theme,
+            look: bundle.look,
+          });
+          const idNode = res.scene.find((n) => n.id === "id-line");
+          expect(idNode).toBeDefined();
+          expect(idNode?.type === "text" && idNode.status).toBe("ok");
+          expect(idNode?.type === "text" && idNode.lines).toEqual([
+            "HX26-P-001",
+          ]);
+          expect(
+            idNode?.type === "text" && idNode.lines[0].endsWith("..."),
+          ).toBe(false);
+
+          const trunc = res.issues.filter(
+            (i) => i.code === "TEXT_TRUNCATED" && i.nodeId === "id-line",
+          );
+          expect(trunc.length).toBe(0);
+        }
+      }
+    });
+
+    it("(b) 40-character and 64-character IDs truncate gracefully with warning and no crash", () => {
+      const bundle = compose(
+        sampleEventSpec,
+        "test-seed",
+        "hero-photo-top",
+        "light",
+      );
+      for (const len of [40, 64]) {
+        const longId = "HX26-P-" + "X".repeat(len - 7);
+        const res = renderCard({
+          person: {
+            id: longId,
+            name: "Preet Patel",
+            roleId: "participant",
+            org: "SVNIT",
+          },
+          event: sampleEventSpec,
+          brand: sampleBrandKit,
+          card: sampleEventSpec.card,
+          fonts,
+          skeleton: bundle.skeleton,
+          blocks: bundle.blocks,
+          theme: bundle.theme,
+          look: bundle.look,
+        });
+        const idNode = res.scene.find((n) => n.id === "id-line");
+        expect(idNode).toBeDefined();
+        expect(idNode?.type === "text" && idNode.status).toBe("truncated");
+        expect(idNode?.type === "text" && idNode.lines[0].endsWith("...")).toBe(
+          true,
+        );
+        if (idNode?.type === "text") {
+          expect(
+            measure(idNode.lines[0], idNode.sizeMm, fonts.body),
+          ).toBeLessThanOrEqual(idNode.box.w + 0.05);
+        }
+
+        const trunc = res.issues.find(
+          (i) => i.code === "TEXT_TRUNCATED" && i.nodeId === "id-line",
+        );
+        expect(trunc).toBeDefined();
+        expect(trunc?.severity).toBe("warning");
+      }
+    });
+
+    it("(c) text that really does not fit at 5.5 pt still ends with '...' and status 'truncated'", () => {
+      const longText =
+        "Very Long Organization Name That Cannot Fit In Small Space";
+      const res = fitText({
+        text: longText,
+        boxWidthMm: 20,
+        sizeRangePt: [5.5, 5.5],
+        maxLines: 1,
+        font: testFont,
+      });
+      expect(res.status).toBe("truncated");
+      expect(res.lines[0].endsWith("...")).toBe(true);
+      expect(measure(res.lines[0], res.sizeMm, testFont)).toBeLessThanOrEqual(
+        20.01,
+      );
+    });
+
+    it("(d) no text size is below 5.5 pt anywhere across all archetypes and modes", () => {
+      for (const arch of ARCHETYPES) {
+        for (const mode of MODES) {
+          const bundle = compose(sampleEventSpec, "test-seed", arch, mode);
+          const res = renderCard({
+            person: {
+              id: "HX26-P-001",
+              name: "Preet Patel",
+              roleId: "participant",
+              org: "SVNIT",
+            },
+            event: sampleEventSpec,
+            brand: sampleBrandKit,
+            card: sampleEventSpec.card,
+            fonts,
+            skeleton: bundle.skeleton,
+            blocks: bundle.blocks,
+            theme: bundle.theme,
+            look: bundle.look,
+          });
+          for (const node of res.scene) {
+            if (node.type === "text" && typeof node.sizeMm === "number") {
+              const pt = node.sizeMm / PT_TO_MM;
+              expect(pt).toBeGreaterThanOrEqual(5.49);
+            }
+          }
+        }
+      }
+    });
+
+    it("(e) every start==min value from scan (5.5 to 16 pt in 0.1 steps) behaves correctly without skipping Stage 1", () => {
+      for (let pt10 = 55; pt10 <= 160; pt10++) {
+        const pt = pt10 / 10;
+        const res = fitText({
+          text: "ID-123",
+          boxWidthMm: 80,
+          sizeRangePt: [pt, pt],
+          maxLines: 1,
+          font: testFont,
+        });
+        expect(res.status).toBe("ok");
+        expect(res.lines).toEqual(["ID-123"]);
+        expect(res.sizeMm / PT_TO_MM).toBeGreaterThanOrEqual(pt - 0.05);
+      }
+    });
+
+    it("(f) rendering determinism is preserved", () => {
+      const bundle = compose(
+        sampleEventSpec,
+        "deterministic-seed",
+        "hero-photo-top",
+        "light",
+      );
+      const input = {
+        person: {
+          id: "HX26-P-001",
+          name: "Preet Patel",
+          roleId: "participant",
+          org: "SVNIT",
+        },
+        event: sampleEventSpec,
+        brand: sampleBrandKit,
+        card: sampleEventSpec.card,
+        fonts,
+        skeleton: bundle.skeleton,
+        blocks: bundle.blocks,
+        theme: bundle.theme,
+        look: bundle.look,
+      };
+      const res1 = renderCard(input);
+      const res2 = renderCard(input);
+      expect(res1.svg).toBe(res2.svg);
+      expect(res1.scene).toEqual(res2.scene);
+      expect(res1.issues).toEqual(res2.issues);
+    });
+
+    it("(Condition 3) every node sizeMm in rendered scenes across 4 archetypes x 3 modes matches expected sizes", () => {
+      for (const arch of ARCHETYPES) {
+        for (const mode of MODES) {
+          const bundle = compose(sampleEventSpec, "test-seed", arch, mode);
+          const res = renderCard({
+            person: {
+              id: "HX26-P-001",
+              name: "Preet Patel",
+              roleId: "participant",
+              org: "SVNIT",
+            },
+            event: sampleEventSpec,
+            brand: sampleBrandKit,
+            card: sampleEventSpec.card,
+            fonts,
+            skeleton: bundle.skeleton,
+            blocks: bundle.blocks,
+            theme: bundle.theme,
+            look: bundle.look,
+          });
+          const idNode = res.scene.find((n) => n.id === "id-line");
+          expect(idNode?.sizeMm).toBe(2); // 5.5 pt clamped step 20 = 2.0 mm
+          const nameNode = res.scene.find((n) => n.id === "name");
+          expect(nameNode?.sizeMm).toBeGreaterThanOrEqual(9 * PT_TO_MM - 0.05);
+        }
+      }
     });
   });
 });

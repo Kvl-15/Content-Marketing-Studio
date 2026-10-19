@@ -175,11 +175,12 @@ export function fitText({
 }) {
   const startMm = startPt * PT_TO_MM;
   const minMm = minPt * PT_TO_MM;
-  const floorMm = (oneLineFloorPt !== undefined ? oneLineFloorPt : minPt) * PT_TO_MM;
+  const floorMm =
+    (oneLineFloorPt !== undefined ? oneLineFloorPt : minPt) * PT_TO_MM;
 
-  const startStep = Math.round(startMm * 10);
   const floorStep = Math.ceil(floorMm * 10 - 0.0001);
   const minStep = Math.ceil(minMm * 10 - 0.0001);
+  const startStep = Math.max(Math.round(startMm * 10), floorStep);
 
   // Stage 1: One line with a small shrink (start down to oneLineFloor in 0.1 mm steps)
   for (let step = startStep; step >= floorStep; step--) {
@@ -207,7 +208,10 @@ export function fitText({
     lines = lines.slice(0, maxLines);
   }
   let lastLine = lines[lines.length - 1] || "";
-  while (lastLine.length > 0 && measure(`${lastLine}...`, sMm, font) > boxWidthMm) {
+  while (
+    lastLine.length > 0 &&
+    measure(`${lastLine}...`, sMm, font) > boxWidthMm
+  ) {
     lastLine = lastLine.slice(0, -1).trimEnd();
   }
   lines[lines.length - 1] = `${lastLine}...`;

@@ -211,6 +211,24 @@
   - Tests: 31 unit tests in `server/export/export.test.js` covering gate fail-closed, role errors, warnings ack, zero file writing, filename sanitisation/reserved names/traversal, asset preflight checks (missing fonts, unpopulated logo assets), SVG structure/dimensions/D-28, landscape refusal, non-empty card checks (image count, PNG differing without logos, >5 colours), and PNG rasterisation/density/corners/determinism at 72, 300, 600, 1200 DPI across all 3 modes (light mode sampled 3 px inside corner at (3, 3) matching role-bar fill #2563EB).
   - 280 tests passed across 16 test files (`npx vitest run`).
 
+- Task T1: Fix text-fitting step rounding bug (20 October 2026)
+  - Files: `core/text.js`, `core/text.test.js`, `scripts/measure-cards.js`, `scripts/export-demo.js`, `docs/PROGRESS.md`.
+  - Diagnosis & Root Cause: In `core/text.js`, `startStep` was calculated with `Math.round(startMm * 10)` while `floorStep` and `minStep` were calculated with `Math.ceil(floorMm * 10 - 0.0001)`. For `startPt === minPt === 5.5 pt` (1.94028 mm), `startStep` yielded 19 while `floorStep` yielded 20. Because `startStep < floorStep`, Stage 1 and Stage 2 loops never executed, dumping clean IDs unconditionally into Stage 3 (truncation with `...` and `TEXT_TRUNCATED`).
+  - Fix: Applied clamp `startStep = Math.max(Math.round(startMm * 10), floorStep)` (Condition 1). This guarantees `startStep >= floorStep` when `startPt >= floorPt`, preserves D-32 (never below 5.5 pt / 2.0 mm step), and prevents raising sizes above declared start sizes when `startPt > floorPt`.
+  - Scan analysis (5.5 to 16.0 pt in 0.1 steps where start == min == floor):
+    - 51 out of 106 tested pt values skipped Stage 1 under the old code (5.5, 5.7, 5.8, 6.0, 6.3, 6.6, 6.9, 7.1, 7.2, 7.4, 7.5, 7.7, 8.0, 8.3, 8.6, 8.8, 8.9, 9.1, 9.2, 9.4, 9.7, 10.0, 10.3, 10.5, 10.6, 10.8, 10.9, 11.1, 11.4, 11.7, 12.0, 12.2, 12.3, 12.5, 12.6, 12.8, 13.1, 13.4, 13.7, 13.9, 14.0, 14.2, 14.3, 14.5, 14.8, 15.1, 15.4, 15.6, 15.7, 15.9, 16.0).
+    - 0 values skip Stage 1 after the fix.
+    - Used in `composer.js` for `id-line` with `size: [5.5, 5.5]` across all 4 archetypes (`hero-photo-top`, `colour-block-split`, `circle-badge-centre`, `typographic-name-first`).
+  - Golden files: Verified with `git diff --stat core/golden` (empty; `personNormal.svg` and `personLongName.svg` use `[9, 6.5]` and contain no `id-line`, so they remain 100% byte-identical).
+  - Regression measurement run (20 seeds, 3,840 cards across 4 archetypes x 3 modes x 8 stress people x 2 QR states):
+    - `id-line` `TEXT_TRUNCATED` warnings: dropped from 3,840 / 3,840 (100%) to 0 / 3,840 (0.0%).
+    - Total `TEXT_TRUNCATED` warnings dropped from 4,896 to 1,056 (-3,840 exact difference).
+    - Name truncations (840) and Org truncations (216) remained strictly identical.
+    - Drop rates: QR 50.0%, Org drops (4.4%, 7.5%, 8.1%, 12.5%), ID-line drops (0.0%), and smallest gap (2.0 mm) remained strictly identical.
+  - Demo script: Removed `acknowledgedWarnings: true` from `scripts/export-demo.js`. All 3 demo roles export with `issues: []` (zero warnings, zero errors).
+  - Tests: Added 7 unit tests in `core/text.test.js` covering `HX26-P-001` across all archetypes/modes, 40/64-char IDs, real 5.5 pt truncation, 5.5 pt floor assertion, all 106 scan values, determinism, and Condition 3 node size verification.
+  - 287 tests passed across 16 test files (`npx vitest run`).
+
 ## In progress
 
 - Physical print test: print `card.svg` on a real printer to verify physical dimensions, margin, and logo sizes (from Task 3).

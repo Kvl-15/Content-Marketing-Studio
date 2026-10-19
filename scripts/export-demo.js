@@ -100,12 +100,11 @@ async function main() {
 
     const svgResult = await exportCard(input, svgSettings, {
       outputPath: svgPath,
-      acknowledgedWarnings: true,
     });
     if (svgResult.ok) {
       const stats = await fs.promises.stat(svgPath);
       console.log(
-        `[SVG] ${person.roleId.padEnd(12)} -> ${svgFileName} (${stats.size} bytes)`,
+        `[SVG] ${person.roleId.padEnd(12)} -> ${svgFileName} (${stats.size} bytes), issues: ${JSON.stringify(svgResult.issues || [])}`,
       );
     } else {
       console.error(`[SVG ERROR] ${svgResult.reason}`);
@@ -122,12 +121,11 @@ async function main() {
 
     const pngResult = await exportCard(input, pngSettings, {
       outputPath: pngPath,
-      acknowledgedWarnings: true,
     });
     if (pngResult.ok) {
       const stats = await fs.promises.stat(pngPath);
       console.log(
-        `[PNG] ${person.roleId.padEnd(12)} -> ${pngFileName} (${stats.size} bytes, ${pngResult.widthPx}x${pngResult.heightPx} px @ ${pngResult.dpi} DPI)`,
+        `[PNG] ${person.roleId.padEnd(12)} -> ${pngFileName} (${stats.size} bytes, ${pngResult.widthPx}x${pngResult.heightPx} px @ ${pngResult.dpi} DPI), issues: ${JSON.stringify(pngResult.issues || [])}`,
       );
     } else {
       console.error(`[PNG ERROR] ${pngResult.reason}`);

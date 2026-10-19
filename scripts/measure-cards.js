@@ -18,7 +18,9 @@ import { PT_TO_MM } from "../core/text.js";
 function loadFont(relPath) {
   const p = resolve(process.cwd(), relPath);
   const buf = readFileSync(p);
-  return opentype.parse(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
+  return opentype.parse(
+    buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength),
+  );
 }
 
 const fontRegistry = {
@@ -70,7 +72,13 @@ export function measureBottomStackGaps(scene) {
   const blocks = scene.filter((n) => {
     if (!n.box || n.id === "bg") return false;
     // Exclude header elements
-    if (n.id === "logo1" || n.id === "logo2" || n.id === "logos-plate" || n.id === "event-name" || n.id === "band") {
+    if (
+      n.id === "logo1" ||
+      n.id === "logo2" ||
+      n.id === "logos-plate" ||
+      n.id === "event-name" ||
+      n.id === "band"
+    ) {
       return false;
     }
     // Exclude photo
@@ -102,7 +110,9 @@ export function measureBottomStackGaps(scene) {
       if (b.box.y < a.box.y) continue;
 
       // Check horizontal overlap between a and b
-      const xOverlap = Math.min(a.box.x + a.box.w, b.box.x + b.box.w) - Math.max(a.box.x, b.box.x);
+      const xOverlap =
+        Math.min(a.box.x + a.box.w, b.box.x + b.box.w) -
+        Math.max(a.box.x, b.box.x);
       if (xOverlap <= 0.5) continue; // No significant horizontal overlap
 
       // Check if there is an intermediate block c between a and b that also overlaps horizontally
@@ -111,8 +121,11 @@ export function measureBottomStackGaps(scene) {
         if (k === i || k === j) continue;
         const c = blocks[k];
         if (c.box.y >= a.box.y && c.box.y + c.box.h <= b.box.y + 0.1) {
-          const cOverlap = Math.min(Math.min(a.box.x + a.box.w, b.box.x + b.box.w), c.box.x + c.box.w) -
-                          Math.max(Math.max(a.box.x, b.box.x), c.box.x);
+          const cOverlap =
+            Math.min(
+              Math.min(a.box.x + a.box.w, b.box.x + b.box.w),
+              c.box.x + c.box.w,
+            ) - Math.max(Math.max(a.box.x, b.box.x), c.box.x);
           if (cOverlap > 0.5 && c.box.y > a.box.y && c.box.y < b.box.y) {
             intermediate = true;
             break;
@@ -175,7 +188,9 @@ export function runMeasurements() {
     for (const archetype of ARCHETYPES) {
       for (const mode of MODES) {
         const bundle = compose(sampleEventSpec, seed, archetype, mode);
-        const fonts = fontRegistry[bundle.look.attributes.typography] || fontRegistry["space-grotesk"];
+        const fonts =
+          fontRegistry[bundle.look.attributes.typography] ||
+          fontRegistry["space-grotesk"];
 
         for (const qrEnabled of [true, false]) {
           const eventSpec = {
@@ -221,11 +236,29 @@ export function runMeasurements() {
               brokenCardsCount++;
             }
 
-            const droppedIssues = (res.issues || []).filter((i) => i.code === "ELEMENT_DROPPED");
+            const droppedIssues = (res.issues || []).filter(
+              (i) => i.code === "ELEMENT_DROPPED",
+            );
+            const truncatedIssues = (res.issues || []).filter(
+              (i) => i.code === "TEXT_TRUNCATED",
+            );
             const fixes = res.fixes || [];
-            const qrDropped = qrEnabled && (droppedIssues.some((i) => i.nodeId === "qr" || i.nodeId === "qr-box") || fixes.some((f) => f.nodeId === "qr-box" || f.nodeId === "qr-label"));
-            const orgDropped = droppedIssues.some((i) => i.nodeId === "org") || fixes.some((f) => f.nodeId === "org");
-            const idDropped = droppedIssues.some((i) => i.nodeId === "id-line" || i.nodeId === "id") || fixes.some((f) => f.nodeId === "id-line" || f.nodeId === "id");
+            const qrDropped =
+              qrEnabled &&
+              (droppedIssues.some(
+                (i) => i.nodeId === "qr" || i.nodeId === "qr-box",
+              ) ||
+                fixes.some(
+                  (f) => f.nodeId === "qr-box" || f.nodeId === "qr-label",
+                ));
+            const orgDropped =
+              droppedIssues.some((i) => i.nodeId === "org") ||
+              fixes.some((f) => f.nodeId === "org");
+            const idDropped =
+              droppedIssues.some(
+                (i) => i.nodeId === "id-line" || i.nodeId === "id",
+              ) ||
+              fixes.some((f) => f.nodeId === "id-line" || f.nodeId === "id");
 
             cards.push({
               seed,
@@ -243,6 +276,7 @@ export function runMeasurements() {
               qrDropped,
               orgDropped,
               idDropped,
+              truncatedIssues,
             });
           }
         }
@@ -250,16 +284,27 @@ export function runMeasurements() {
     }
   }
 
-  // Aggregate drops per archetype
+  // Aggregate drops and truncations per archetype
   const dropsByArchetype = {};
+  const truncationsByArchetype = {};
+  const allTruncatedNodes = new Set();
   for (const arch of ARCHETYPES) {
     dropsByArchetype[arch] = { qr: 0, org: 0, idLine: 0, total: 0 };
+    truncationsByArchetype[arch] = { total: 0, byNode: {} };
   }
   for (const c of cards) {
     dropsByArchetype[c.archetype].total++;
     if (c.qrDropped) dropsByArchetype[c.archetype].qr++;
     if (c.orgDropped) dropsByArchetype[c.archetype].org++;
     if (c.idDropped) dropsByArchetype[c.archetype].idLine++;
+
+    for (const issue of c.truncatedIssues || []) {
+      const nodeId = issue.nodeId || "unknown";
+      allTruncatedNodes.add(nodeId);
+      truncationsByArchetype[c.archetype].total++;
+      truncationsByArchetype[c.archetype].byNode[nodeId] =
+        (truncationsByArchetype[c.archetype].byNode[nodeId] || 0) + 1;
+    }
   }
 
   // Sort to find 5 worst cards (lowest gap first, then lowest text size)
@@ -277,38 +322,83 @@ export function runMeasurements() {
     brokenCardsCount,
     worst5,
     dropsByArchetype,
+    truncationsByArchetype,
+    allTruncatedNodes: Array.from(allTruncatedNodes).sort(),
   };
 }
 
 if (process.argv[1] && process.argv[1].endsWith("measure-cards.js")) {
-  console.log("Measuring cards across archetypes x modes x stressSet x QR x seeds...");
+  console.log(
+    "Measuring cards across archetypes x modes x stressSet x QR x seeds...",
+  );
   const t0 = Date.now();
   const results = runMeasurements();
   const elapsed = ((Date.now() - t0) / 1000).toFixed(2);
 
   console.log(`\n=== MEASUREMENT REPORT (${elapsed}s) ===`);
   console.log(`Total Cards Evaluated: ${results.totalCards}`);
-  console.log(`Smallest Gap in Bottom Stack: ${results.minGapOverall} mm (Rule: >= 2.0 mm)`);
-  console.log(`Smallest Text Size: ${results.minTextOverall} pt (Rule: >= 5.5 pt)`);
-  console.log(`Cards Breaking a Rule: ${results.brokenCardsCount} / ${results.totalCards} (${((results.brokenCardsCount / results.totalCards) * 100).toFixed(1)}%)`);
+  console.log(
+    `Smallest Gap in Bottom Stack: ${results.minGapOverall} mm (Rule: >= 2.0 mm)`,
+  );
+  console.log(
+    `Smallest Text Size: ${results.minTextOverall} pt (Rule: >= 5.5 pt)`,
+  );
+  console.log(
+    `Cards Breaking a Rule: ${results.brokenCardsCount} / ${results.totalCards} (${((results.brokenCardsCount / results.totalCards) * 100).toFixed(1)}%)`,
+  );
 
   console.log(`\n=== DROPS PER ARCHETYPE ===`);
-  console.log(`Archetype                | Total | QR Drops (%)      | Org Drops (%)     | ID-Line Drops (%)`);
-  console.log(`-------------------------|-------|-------------------|-------------------|------------------`);
+  console.log(
+    `Archetype                | Total | QR Drops (%)      | Org Drops (%)     | ID-Line Drops (%)`,
+  );
+  console.log(
+    `-------------------------|-------|-------------------|-------------------|------------------`,
+  );
   for (const [arch, stats] of Object.entries(results.dropsByArchetype)) {
     const qrPct = ((stats.qr / stats.total) * 100).toFixed(1);
     const orgPct = ((stats.org / stats.total) * 100).toFixed(1);
     const idPct = ((stats.idLine / stats.total) * 100).toFixed(1);
-    console.log(`${arch.padEnd(24)} | ${String(stats.total).padEnd(5)} | ${String(stats.qr).padStart(4)} (${qrPct.padStart(4)}%)   | ${String(stats.org).padStart(4)} (${orgPct.padStart(4)}%)   | ${String(stats.idLine).padStart(4)} (${idPct.padStart(4)}%)`);
+    console.log(
+      `${arch.padEnd(24)} | ${String(stats.total).padEnd(5)} | ${String(stats.qr).padStart(4)} (${qrPct.padStart(4)}%)   | ${String(stats.org).padStart(4)} (${orgPct.padStart(4)}%)   | ${String(stats.idLine).padStart(4)} (${idPct.padStart(4)}%)`,
+    );
+  }
+
+  console.log(`\n=== TEXT_TRUNCATED WARNINGS PER ARCHETYPE & NODE ID ===`);
+  const nodeIdsList = results.allTruncatedNodes;
+  if (nodeIdsList.length === 0) {
+    console.log("No TEXT_TRUNCATED warnings detected.");
+  } else {
+    const headerCols = nodeIdsList.map((n) => n.padEnd(12)).join(" | ");
+    const dividerCols = nodeIdsList.map(() => "------------").join("-|-");
+    console.log(`Archetype                | Total Trunc | ${headerCols}`);
+    console.log(`-------------------------|-------------|-${dividerCols}`);
+    for (const [arch, stats] of Object.entries(
+      results.truncationsByArchetype,
+    )) {
+      const nodeCols = nodeIdsList
+        .map((n) => String(stats.byNode[n] || 0).padStart(12))
+        .join(" | ");
+      console.log(
+        `${arch.padEnd(24)} | ${String(stats.total).padStart(11)} | ${nodeCols}`,
+      );
+    }
   }
 
   console.log(`\n=== 5 WORST CARDS ===`);
   results.worst5.forEach((c, idx) => {
-    console.log(`${idx + 1}. Archetype: ${c.archetype} | Mode: ${c.mode} | Seed: ${c.seed} | Person: ${c.personId} | QR: ${c.qrEnabled}`);
-    console.log(`   Min Gap: ${c.minGapMm} mm | Min Text: ${c.minTextPt} pt | Pal: ${c.paletteScore}`);
+    console.log(
+      `${idx + 1}. Archetype: ${c.archetype} | Mode: ${c.mode} | Seed: ${c.seed} | Person: ${c.personId} | QR: ${c.qrEnabled}`,
+    );
+    console.log(
+      `   Min Gap: ${c.minGapMm} mm | Min Text: ${c.minTextPt} pt | Pal: ${c.paletteScore}`,
+    );
     if (c.gapDetails && c.gapDetails.length > 0) {
-      const smallest = c.gapDetails.slice().sort((x, y) => x.gapMm - y.gapMm)[0];
-      console.log(`   Worst Gap: ${smallest.topId} -> ${smallest.bottomId} = ${smallest.gapMm} mm`);
+      const smallest = c.gapDetails
+        .slice()
+        .sort((x, y) => x.gapMm - y.gapMm)[0];
+      console.log(
+        `   Worst Gap: ${smallest.topId} -> ${smallest.bottomId} = ${smallest.gapMm} mm`,
+      );
     }
   });
 }
