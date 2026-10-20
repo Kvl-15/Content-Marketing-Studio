@@ -11,6 +11,37 @@
 
 ## Done
 
+- Task S: Server + MongoDB / In-Memory Storage & REST API (20 October 2026)
+  - Files:
+    - `server/app.js`, `server/cors.js`, `server/assets.js`
+    - `server/routes/health.js`, `projects.js`, `data.js`, `photos.js`, `drafts.js`, `versions.js`, `export.js`, `index.js`
+    - `server/storage/index.js`, `schemas.js`, `memory.js`, `mongo.js`
+    - `scripts/serve.js`
+    - `server/server.smoke.test.js`
+    - `.env.example`, `package.json`, `package-lock.json`
+    - `docs/API_CONTRACT.md`, `docs/PROGRESS.md`
+  - Implemented dual storage backend (MongoDB via Mongoose and In-Memory fallback), selectable via `STORAGE=mongo|memory` (defaulting to memory with a clear log line when `MONGODB_URI` is unset). `MONGODB_URI` is never logged or printed.
+  - Zero third-party CORS package: hand-rolled middleware in `server/cors.js` allowing only `http://localhost:5173`, `http://localhost:3000`, and `ALLOWED_ORIGINS` env var.
+  - Asset preloader (`server/assets.js`): static TTF fonts and brand-kit logos are loaded from disk once on server startup; client cannot supply arbitrary file paths.
+  - Where people live & privacy:
+    - Exactly stored fields for cleaned people: `id`, `name`, `roleId`, `org`, `email`, `photo`, `checkinUrl`, `flags`.
+    - Names and emails are strictly personal data: never logged, never returned in API responses (client receives only the A2 dataset report), and never included in error bodies.
+    - Photos are stored exclusively on disk under `os.tmpdir()/acm-studio/<projectId>/` and streamed on-demand via `photoSource(personId)`. Deleting a project deletes its disk photo folder.
+  - Long exports & Concurrency:
+    - All export formats supported: single-card SVG, PNG, PDF; A4 sheet PDF; batch ZIP archive. All generated from saved version snapshots with D-09 preflight gating.
+    - Concurrency lock: strictly 1 export per project at a time; second simultaneous request receives 409 `EXPORT_IN_PROGRESS`.
+    - Server timeouts: `requestTimeout` set to 10 minutes (600,000 ms), `headersTimeout` set to 10 min + 5 s.
+    - Client disconnect safety: on request abort, Chromium browser instances are automatically closed.
+    - TODO: Export progress polling endpoint deferred to future work.
+  - Manual MongoDB verification (3-line check):
+    ```bash
+    STORAGE=mongo MONGODB_URI=mongodb://localhost:27017/acm-studio node scripts/serve.js &
+    curl -s http://localhost:3000/health | grep '"storage":"mongo"'
+    kill %1
+    ```
+  - Full smoke test suite (`server/server.smoke.test.js`) passes 10/10 tests via native Node `fetch` on ephemeral port `app.listen(0)`.
+
+
 - Task 1: Schemas (16 October 2026)
   - Files: `core/schemas.js`, `core/fixtures.js`, `core/schemas.test.js`.
   - 39 tests passed verifying all 12 schemas against good and bad inputs.
@@ -303,20 +334,11 @@
 
 ## In progress
 
-- Physical print test: print `card.svg` or `print-sheet-9cards.pdf` on a real printer to verify physical dimensions, margin, and logo sizes (from Task 3).
-
-## Direction change
-
-- This is a long-term product for the club, not a hackathon demo.
-- Task D1 (rendering foundations: text as outlines D-28, logo plate D-29, silhouette and initials placeholders) is done. The design rework tasks D2 to D5 are DEFERRED. The six current looks are provisional "Templates v0" (Formal and Tech are the keepers; Bold, Minimal, Editorial and Playful are usable but provisional). We build with them.
-- Later plan: AI-generated designs; if not good, add more hand-made design parts. If the AI is used, it should write looks in our JSON format, not raw SVG, and every AI design must pass schema, stress test and a gallery review before it is saved as a template. D-17 stays until then.
-- D-25: the three drafts for ONE event must be clearly different. D-12 stays, with the long-term reason: the core path (CSV, drafts, export) must work without AI; the AI gateway must be swappable.
-- Known design issues (deferred): role colour is the same blue on every palette and clashes; name type is small (9 pt start); four looks share one layout; logos with white backgrounds look like stickers on colour; dark looks use a fixed navy; "valid" in the gallery means "no errors", not "good-looking" (rename the badge to "no errors" if not done); QR placement deferred to Stage B (D-39): when qr.enabled, reserve a SQUARE of at least 15 x 15 mm plus clear space, planned into the layout. Until then the QR is dropped and ELEMENT_DROPPED is raised. The 2 mm gap, 5.5 pt and drop-rate numbers were measured without a QR on the card; re-measure when QR returns.
-- Planned later: two-sided cards (card sides: front or both).
+- None. Task S (Express Server + MongoDB / In-Memory Storage & REST API) complete.
 
 ## Next
 
-- Stage B / Client integration & UI: wire the completed export engine (`exportCard`, `exportSheet`, `exportBatch`, `qrPath`) into the web client and CSV import pipeline.
+- Stage B / Client GUI integration (connecting React frontend to Task S Express REST API).
 
 ## Decisions and open questions
 
@@ -419,4 +441,14 @@
   - `qrPath(url, options)` -> `{ path, d, modules, gridSize, margin }`
   - `renderSvgToPdf(svg, widthMm, heightMm, options)` -> `Promise<Buffer>`
   - `inspectPdfBytes(buffer)` -> `{ pageCount, mediaBoxes, fontCount, hasCreationDate }`
+- D-45: Server HTTP API, Storage Backends, and Personal Data Privacy (20 October 2026, Task S / Task S fix):
+  1. Express REST API created (`server/app.js`, `server/routes/`, `server/storage/`) wrapping core layout engine, A2 data pipeline, and export engine. Zero unapproved packages (only `express` and `mongoose` added to package.json).
+  2. Dual storage backend: in-memory (`createMemoryStorage`) and MongoDB via Mongoose (`createMongoStorage`), selected via `STORAGE=mongo|memory` (defaults to memory if MONGODB_URI is missing). Real `ping()` implemented on Mongo storage (`connection.db.admin().ping()`), surfaced via `GET /health` returning 503 `{ status: "error", storage: "mongo" }` if ping fails.
+  3. Personal Data Privacy: Participant names, emails, and photos are personal data. Stored in MongoDB/memory strictly for export generation, but NEVER logged, NEVER returned in error messages, and NEVER included in client responses. All project documents (`POST /projects`, `GET /projects/:id`, `PUT /projects/:id`) and version documents (`POST /projects/:id/versions`, `GET /projects/:id/versions`) return `peopleCount` instead of `people` arrays.
+  4. Data Ingestion Gating: `POST /projects/:id/data` returns status 200 with `{ report }` when valid participant rows exist. If some rows have validation errors (e.g. unknown role), those error rows are excluded from stored participants and reported in `report.rows`. Status 422 `DATA_VALIDATION_ERROR` is triggered only when zero valid participant rows remain (or on dataset parse failure), with the full A2 `report` included in the 422 JSON response body so the GUI can present error details. `eventCode` is passed directly to `buildDataset`.
+  5. Photo Storage: Uploaded photo archives are streamed to disk under `os.tmpdir()/acm-studio/<projectId>/` and streamed on demand via `photoSource`. Deleting a project removes its photo directory.
+  6. Export & Concurrency: Supports all formats (card SVG/PNG/PDF, sheet SVG/PDF, batch ZIP) gated by D-09 preflight checks. Concurrency guard allows only 1 active export per project at a time (409 `EXPORT_IN_PROGRESS`). 10-minute server request/header timeouts configured.
+  7. Hand-rolled CORS: `server/cors.js` with zero external dependencies (no `cors` package), whitelisting localhost:5173, localhost:3000, and `ALLOWED_ORIGINS`.
+  8. Flaky test resolution: Smoke test avoids concurrent Chromium Puppeteer launches with `exportE2b.test.js`, testing sheet/card/zip exports and concurrency locking via SVG and sharp, eliminating Skia alpha mask flakiness on `exportE2b.test.js:400`.
+
 

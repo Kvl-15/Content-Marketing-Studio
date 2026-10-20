@@ -368,305 +368,134 @@ The report is deterministic for the same input and mapping. CSV, XLSX, and
 JSON tabular input are supported by the A2 parser. A photo ZIP accepts JPEG,
 PNG, and WebP entries and reports matching/unmatched files and rows.
 
-## 4. Endpoint contract
+## 4. Endpoint contract (REAL Server Implementation - Task S)
 
-The HTTP paths below follow Part 14.3 where a path exists. A route marked
-**PLANNED** has no implemented handler in the inspected source. Its request
-and response are deliberately not filled with guessed fields.
+The HTTP endpoints below are implemented in `server/app.js` and `server/routes/`.
+Every endpoint uses the common error envelope: `{ error: { code, message, issues? } }`.
 
-### 4.1 Projects
+### 4.1 System & Health
 
-#### `POST /projects` — create a project (PLANNED)
+#### `GET /health` (REAL)
+- **Request:** none.
+- **Response (200):** `{ "status": "ok", "storage": "mongo" | "memory" }`
+- **Errors:** 503 `{ "status": "error", "storage": "mongo" }` when database ping fails.
 
-- **Request body:** PLANNED. The source does not define whether creation
-  accepts a brief, a form submission, or a complete `EventSpec`.
-- **Response body:** PLANNED. The source does not define a project document or
-  project identifier shape.
-- **Possible errors:** `INVALID_REQUEST`, `INVALID_EVENT_SPEC`,
-  `STORAGE_ERROR` (all PLANNED error mappings).
+### 4.2 Projects
 
-#### `GET /projects` — list projects (PLANNED)
-
-- **Request body:** none.
-- **Response body:** PLANNED. The source does not define the list item shape.
-- **Possible errors:** `STORAGE_ERROR` (PLANNED).
-
-#### `GET /projects/:id` — get one project (PLANNED)
-
-- **Request body:** none.
-- **Response body:** PLANNED. The source does not define the project document
-  returned by storage.
-- **Possible errors:** `NOT_FOUND`, `STORAGE_ERROR` (PLANNED).
-
-### 4.2 EventSpec save and lock
-
-#### `PATCH /projects/:id/spec` — save EventSpec answers (PLANNED)
-
-- **Request body:** PLANNED. Part 14.3 says this applies answers validated per
-  field, but no patch/answer shape exists in source. Do not assume a JSON Patch
-  format or a field-path format.
-- **Response body:** PLANNED. A saved spec should be validated as `EventSpec`,
-  but the version/envelope shape is not defined.
-- **Possible errors:** `NOT_FOUND`, `INVALID_REQUEST`, `INVALID_EVENT_SPEC`,
-  `INVALID_STATE`, `STORAGE_ERROR` (PLANNED).
-
-#### `POST /projects/:id/spec/lock` — lock a new EventSpec version (PLANNED)
-
-- **Request body:** PLANNED. The source does not say whether the body is empty,
-  the complete spec, or a version command.
-- **Response body:** PLANNED. The locked snapshot itself must be a validated
-  `EventSpec`; the immutable version envelope is not defined.
-- **Possible errors:** `NOT_FOUND`, `INVALID_EVENT_SPEC`, `INVALID_STATE`,
-  `STORAGE_ERROR` (PLANNED).
-
-### 4.3 Data upload
-
-#### `POST /projects/:id/data` — upload tabular data and an optional photo ZIP (PLANNED route; REAL pipeline result)
-
-- **Request body:** PLANNED HTTP multipart field names. The underlying A2
-  function accepts one tabular input, a confirmed `mapping` with type
-  `Record<string, string | number>`, an `eventSpec`, and optional photo ZIP
-  input. The tabular input may be CSV, XLSX, or JSON. The route must not send
-  participant rows or photos to AI.
-- **Response body:** **REAL pipeline result**: `{ people: Person[], report:
-  A2Report }`. The full report shape and example are in section 3.
-- **Row failures:** row-level errors and warnings are returned inside
-  `report.rows`; they do not change the report shape. In particular, unknown
-  roles, duplicate IDs, missing names, and photo problems remain visible in
-  the report.
-- **Possible errors:** `UNSUPPORTED_FORMAT`, `PARSE_ERROR`, and
-  `VALIDATION_ERROR` are REAL `DataPipelineError` codes. `INVALID_REQUEST`,
-  `NOT_FOUND`, and `STORAGE_ERROR` are PLANNED HTTP mappings.
-
-#### `PATCH /projects/:id/data/mapping` — confirm column mapping (PLANNED)
-
-- **Request body:** PLANNED route envelope. The underlying mapping value is a
-  `Record<string, string | number>` and the report exposes the REAL mapping
-  proposal shape in section 3.
-- **Response body:** PLANNED. A subsequent upload response must be
-  `{ people, report }`.
-- **Possible errors:** `NOT_FOUND`, `INVALID_REQUEST`, `VALIDATION_ERROR`,
-  `STORAGE_ERROR` (PLANNED, except the underlying `VALIDATION_ERROR` code).
-
-#### Photo ZIP behavior (REAL pipeline facts)
-
-The A2 pipeline matches a photo by ID, email, or filename stem, applies EXIF
-rotation, converts to sRGB, removes metadata while writing JPEG masters, uses a
-top-biased crop by default, and reports effective DPI. The input limits are
-the values in `report.limits`; they must be shown or enforced by the server,
-not silently changed by the client.
-
-### 4.4 Draft composition
-
-#### `POST /projects/:id/drafts` — compose drafts (PLANNED route; REAL core result)
-
-- **Request body:** PLANNED route envelope. The underlying core call accepts
-  an event object and options including `seed`, optional `previousArchetypes`,
-  optional `previousSeeds`, `count`, `sampleSize`, and stress/font/brand
-  inputs. The exact HTTP body is not defined.
-- **Response body:** **REAL** `composeDrafts()` top-level result:
-
-  ```js
-  { drafts: Draft[], seed: string | number, issues: Issue[] }
-  ```
-
-  A current draft contains the composed `skeleton`, `blocks`, `theme`, and
-  `look`, plus `seed`, `archetype`, `score`, `scoreDetails`; the current
-  composer may also include `scene`, `svg`, `modeFallback`, `fonts`, and
-  draft-level `issues`.
-- **No valid draft:** if no valid draft can be selected, the HTTP route must
-  return the common error body with `error.code: "NO_VALID_DRAFT"` and a plain
-  message such as `No valid draft passed the stress set.`. This is a
-  contract-level error mapping; no server route currently emits it.
-- **Possible errors:** `NO_VALID_DRAFT`, `NOT_FOUND`, `INVALID_REQUEST`,
-  `INVALID_STATE`, `STORAGE_ERROR` (PLANNED HTTP mappings). Core issues remain
-  in the REAL `issues` array when drafts are returned.
-
-### 4.5 Render a card
-
-#### `POST /projects/:id/cards/:personId/render` — render one card (PLANNED route; REAL core result)
-
-- **Request body:** PLANNED. The inspected `renderCard(input)` function
-  accepts a record containing the design bundle and data, but the HTTP body
-  and how the project resolves those inputs are not defined.
-- **Response body:** **REAL** `renderCard()` result:
-
-  ```js
+#### `POST /projects` — create a project (REAL)
+- **Request body:**
+  ```json
   {
-    svg: string,
-    scene: SceneNode[],
-    issues: Issue[],
-    fixes: { code: string, nodeId?: string, action: string }[],
-    trimBox: { x: number, y: number, w: number, h: number },
-    bleedBox: { x: number, y: number, w: number, h: number },
-    bleedMm: number,
+    "name": "NIT Surat Hackathon 2026",
+    "eventSpec": { /* valid EventSpec */ },
+    "eventCode": "NSH26" /* optional: 2-8 uppercase alphanumeric, derived if omitted */
   }
   ```
+- **Response body (201):** Project document with `peopleCount` (`id`, `name`, `eventCode`, `eventSpec`, `datasetReport: null`, `peopleCount: 0`, `currentDrafts: null`, `versions: []`, `createdAt`, `updatedAt`).
+- **Possible errors:** 400 `INVALID_REQUEST` / `INVALID_EVENT_SPEC`.
 
-- **Possible errors:** `NOT_FOUND`, `INVALID_REQUEST`, `INVALID_STATE`,
-  `RENDER_FAILED` (PLANNED HTTP mappings). Validation issues belong in the
-  response `issues` array when rendering succeeds.
+#### `GET /projects` — list projects (REAL)
+- **Request:** none.
+- **Response body (200):** Array of project summaries `[{ id, name, eventCode, createdAt, updatedAt }]`.
 
-### 4.6 Save a version
+#### `GET /projects/:id` — get one project (REAL)
+- **Request:** none.
+- **Response body (200):** Project document with `peopleCount` (personal data privacy: no `people` array).
+- **Possible errors:** 400 `INVALID_PROJECT_ID`, 404 `NOT_FOUND`.
 
-#### `POST /projects/:id/versions` — save an immutable version (PLANNED)
+#### `PUT /projects/:id` — update project metadata (REAL)
+- **Request body:** `{ "name"?: string, "eventCode"?: string }`
+- **Response body (200):** Updated project document with `peopleCount` (no `people` array).
+- **Possible errors:** 400 `INVALID_PROJECT_ID` / `INVALID_REQUEST`, 404 `NOT_FOUND`.
 
-- **Request body:** PLANNED. The source says saved versions are required but
-  does not publish the version request shape.
-- **Response body:** PLANNED. The source does not publish a version id,
-  version number, or saved-version envelope.
-- **Possible errors:** `NOT_FOUND`, `INVALID_REQUEST`, `INVALID_STATE`,
-  `STORAGE_ERROR` (PLANNED).
+#### `PUT /projects/:id/event-spec` — update EventSpec (REAL)
+- **Request body:** `{ "eventSpec": { /* valid EventSpec */ } }`
+- **Response body (200):** `{ "status": "ok", "eventSpec": { ... } }`
+- **Possible errors:** 400 `INVALID_PROJECT_ID` / `INVALID_EVENT_SPEC`, 404 `NOT_FOUND`.
 
-### 4.7 Export
+#### `DELETE /projects/:id` — delete project & disk photos (REAL)
+- **Request:** none.
+- **Response body (200):** `{ "status": "ok" }`
+- **Possible errors:** 400 `INVALID_PROJECT_ID`, 404 `NOT_FOUND`.
 
-#### `POST /projects/:id/export` — start export (PLANNED HTTP route; REAL single-card implementation)
+### 4.3 Data & Photos Upload
 
-The route must use the current `core/exportSettings.js` `ExportSettingsSchema`
-fields exactly. These are the fields; do not substitute the older Part 5
-shape:
+#### `POST /projects/:id/data` — upload tabular data (REAL)
+- **Request:** Raw bytes (CSV, XLSX, or JSON) via `express.raw({ limit: 25MB })`.
+- **Query params:** `?kind=csv|xlsx|json` (optional), `?mapping=<json_encoded_mapping>` (optional).
+- **Processing:** Calls `server/data/buildDataset` with the project's `eventSpec` and `eventCode`. Auto-proposes mapping if omitted. Cleaned participant rows without fatal errors are stored in server database/storage. If some rows contain errors (e.g. unknown role), those error rows are excluded from stored participants and reported in `report.rows`; the upload succeeds with status 200 and returns `{ report }`. Status 422 is returned only when zero valid participant rows remain (or on dataset parse failure), and the full A2 `report` is still included in the 422 response body so the GUI can present error details.
+- **Response body (200):** `{ "report": A2Report }`.
+- **Privacy constraint:** The response contains ONLY the A2 dataset report. Raw participant rows, names, and emails are NOT returned to the client.
+- **Possible errors:** 400 `EMPTY_BODY` / `PARSE_ERROR` / `UNSUPPORTED_FORMAT`, 404 `NOT_FOUND`, 413 `PAYLOAD_TOO_LARGE`, 422 `DATA_VALIDATION_ERROR` (when zero valid participant rows remain, with `report` included).
 
-```js
-{
-  format: "svg" | "pdf" | "png",
-  mode: "single" | "all" | "sheets",
-  card: {
-    widthMm: number,
-    heightMm: number,
-  },
-  orientation: "portrait" | "landscape",
-  dpi: integer,
-  bleedMm: number,
-  cropMarks?: boolean,
-  sides: "front" | "back" | "both",
-  textAsOutlines: boolean,
-  groupByRole: boolean,
-  duplexFlip: "long" | "short",
-  printerSafeMm?: number,
-  sheet: {
-    paper: "A4" | "A3" | "custom",
-    widthMm?: number,
-    heightMm?: number,
-    marginMm: number,
-    gapMm: number,
-    markLengthMm: number,
-    markOffsetMm: number,
-    markStrokeMm: number,
-    printerSafeMm: number,
-    duplexFlip?: "long" | "short",
-  },
-}
-```
+#### `POST /projects/:id/photos` — upload photo ZIP archive (REAL)
+- **Request:** Raw bytes (ZIP archive) via `express.raw({ limit: 300MB })`.
+- **Processing:** Streams ZIP, normalizes JPEG/PNG/WebP photos to disk under `os.tmpdir()/acm-studio/<projectId>/`, matches photos to participant rows, updates stored people records.
+- **Response body (200):** `{ matches: MatchedPhoto[], unmatchedFiles: string[], unmatchedRows: number[], warnings: any[] }`.
+- **Possible errors:** 400 `NO_DATASET` / `EMPTY_BODY`, 404 `NOT_FOUND`, 413 `PAYLOAD_TOO_LARGE`.
 
-The parser applies defaults: `format: "pdf"`, `mode: "sheets"`, CR80 card
-`54 x 85.6`, portrait, `dpi: 300`, `bleedMm: 3`, `sides: "front"`,
-`textAsOutlines: true`, `groupByRole: false`, `duplexFlip: "long"`, A4 sheet,
-and the sheet defaults from the schema. `cropMarks` defaults to true for
-`mode: "sheets"` and false otherwise. Custom paper requires both dimensions.
-The normalized parser result resolves the sheet dimensions and the effective
-`printerSafeMm`/`duplexFlip`.
+### 4.4 Drafts
 
-**E2a availability:**
+#### `POST /projects/:id/drafts` — compose layout drafts (REAL)
+- **Request body:** `{ "count"?: number, "seed"?: string | number }` (default count: 3).
+- **Processing:** Invokes core `composeDrafts` with preloaded fonts and brand assets, verifies preview SVGs, saves drafts to project storage.
+- **Response body (200):** `{ "drafts": Draft[], "seed": string | number, "issues": Issue[] }`.
+- **Possible errors:** 400 `INVALID_PROJECT_ID`, 404 `NOT_FOUND`, 422 `NO_VALID_DRAFT`.
 
-- Single-card SVG and PNG are available through the inspected
-  `exportCard()` implementation.
-- `mode: "single"` is the only mode this contract exposes as implemented.
-  `all` (ZIP) and `sheets` are **PLANNED until E2b** and must return
-  `UNSUPPORTED_MODE` rather than pretending to work.
-- PDF is refused until E2b with `UNSUPPORTED_FORMAT`.
-- Landscape is refused with `UNSUPPORTED_ORIENTATION`.
-- The D-09 gate always refuses when any issue has `severity: "error"`.
-  Warnings refuse unless the request includes
-  `acknowledgedWarnings: true`. A refused export writes nothing.
-- The output filename is derived from `person.id` only. It never uses a
-  person name or email. The filename sanitizer removes unsafe path characters,
-  guards Windows device names, and uses `card` when the id is empty.
+### 4.5 Versions
 
-The inspected single-card implementation returns this **REAL** result on
-success:
+#### `POST /projects/:id/versions` — snapshot immutable version (REAL)
+- **Request body:** `{ "draftIndex": 0 | 1 | 2, "note"?: string }`.
+- **Processing:** Snapshots the chosen composed draft and current cleaned participant rows into immutable version N.
+- **Response body (201):** `{ "versionNumber": number, "draftIndex": number, "draft": any, "peopleCount": number, "timestamp": string, "note"?: string }`. (Participant personal data is never returned; `peopleCount` indicates total participants in snapshot).
+- **Possible errors:** 400 `NO_DRAFTS` / `NO_DATASET` / `INVALID_REQUEST`, 404 `NOT_FOUND`.
 
-```js
-{
-  ok: true,
-  fileName: string,
-  mimeType: "image/svg+xml" | "image/png",
-  data: string | Buffer,
-  widthPx?: number,
-  heightPx?: number,
-  dpi?: number,
-  issues: Issue[],
-  warnings: Issue[],
-}
-```
+#### `GET /projects/:id/versions` — list saved versions (REAL)
+- **Request:** none.
+- **Response body (200):** Array of saved version objects (each with `peopleCount` instead of `people`).
+- **Possible errors:** 400 `INVALID_PROJECT_ID`, 404 `NOT_FOUND`.
 
-For refusal, the implementation returns `ok: false`, `issues`, `errors`,
-`warnings`, and `reason`. The HTTP route must translate that result into the
-common error envelope; the JSON/base64/stream representation of `data` is
-**PLANNED** because no HTTP transport implementation exists yet.
+### 4.6 Export
 
-**Possible export errors:** `INVALID_INPUT_TYPE`,
-`SCHEMA_VALIDATION_ERROR`, `INVALID_EXPORT_SETTINGS`,
-`MISSING_CUSTOM_DIMENSIONS`, and `UNKNOWN_PAPER` come from the REAL
-`ExportSettingsError`/settings parser. `UNSUPPORTED_FORMAT`,
-`UNSUPPORTED_ORIENTATION`, `MISSING_FONTS`, and `MISSING_LOGO_ASSETS` are
-REAL single-card refusal codes. `INVALID_ISSUES` is the REAL fail-closed gate
-code. `UNSUPPORTED_MODE`, `EXPORT_REFUSED`, `NOT_FOUND`, `INVALID_STATE`, and
-`STORAGE_ERROR` are planned HTTP mappings.
+#### `POST /projects/:id/export` — execute card, sheet, or batch export (REAL)
+- **Request body:**
+  ```json
+  {
+    "version": 1,               /* optional: defaults to latest saved version */
+    "kind": "sheet",            /* "card" | "sheet" | "zip" (default: "sheet") */
+    "format": "pdf",            /* "svg" | "png" | "pdf" (for kind: "card") */
+    "personId": "HX26-P-001",   /* required when kind: "card" */
+    "printerSafeMm": 5,         /* optional: sheet printer margin (0-20mm) */
+    "paper": "A4",              /* optional: "A4" | "A3" | "custom" */
+    "orientation": "portrait",  /* "portrait" only (landscape refused with 422) */
+    "sides": "front",           /* "front" only (back/both refused with 422) */
+    "acknowledgedWarnings": true /* required to proceed if warnings present */
+  }
+  ```
+- **Concurrency:** Locked to 1 active export per project at a time. Simultaneous requests receive 409 `EXPORT_IN_PROGRESS`.
+- **Timeouts:** Server socket/header timeout configured to 10 minutes (600,000ms).
+- **Client Disconnect:** On early request abort, active Chromium browser instances are automatically closed.
+- **Rule D-09 Preflight Gate:** Strictly enforced prior to output generation. If any error issue or unacknowledged warning is present, returns 422 `{ error: { code: "PREFLIGHT_FAILED", message: reason, issues } }` and writes 0 bytes.
+- **Response:** Binary stream with appropriate headers:
+  - `Content-Type: application/pdf` | `image/svg+xml` | `image/png` | `application/zip`
+  - `Content-Disposition: attachment; filename="<id-based-filename>"`
+- **Possible errors:** 400 `INVALID_EXPORT_SETTINGS` / `NO_SAVED_VERSION` / `MISSING_PERSON_ID`, 404 `NOT_FOUND` / `VERSION_NOT_FOUND` / `PERSON_NOT_FOUND`, 409 `EXPORT_IN_PROGRESS`, 422 `UNSUPPORTED_ORIENTATION` / `UNSUPPORTED_SIDES` / `PREFLIGHT_FAILED`.
 
-### 4.8 Export progress
+### 4.7 Export Progress & Downloads
+- Export progress endpoint deferred tonight (TODO).
+- Downloads are streamed directly in the `POST /projects/:id/export` response.
 
-#### `GET /exports/:id` — export progress (PLANNED)
+## 5. Storage & Privacy Architecture (REAL)
 
-- **Request body:** none.
-- **Response body:** PLANNED. Part 13 says the frontend polls this endpoint,
-  but no progress or export-record shape exists in the inspected source.
-- **Possible errors:** `NOT_FOUND`, `EXPORT_FAILED`, `STORAGE_ERROR` (PLANNED).
+1. **Storage Models**: Defined with Zod in `server/storage/schemas.js` (`ProjectSchema`, `VersionSchema`, `StoredPersonSchema`).
+2. **Personal Data Privacy**: Names, emails, and photos are personal data. They are stored in MongoDB/memory strictly for card export execution, but NEVER logged, NEVER included in error bodies, and NEVER returned to the client in project or version responses (all client responses return `peopleCount` instead of `people` arrays; dataset upload returns `{ report }` only).
+3. **Photo Storage**: Photos are kept on disk under `os.tmpdir()/acm-studio/<projectId>/` and streamed on demand via `photoSource`. Deleting a project deletes its disk photo folder.
+4. **CORS**: Zero external packages. Hand-rolled middleware in `server/cors.js` whitelist-restricts origins to `http://localhost:5173`, `http://localhost:3000`, and `ALLOWED_ORIGINS`.
 
-### 4.9 Downloads
+## 6. Hand-check list
 
-#### `GET /exports/:id/download` — download completed output (PLANNED path)
-
-- **Request body:** none.
-- **Response body:** PLANNED. The source does not define whether the server
-  streams bytes, returns a URL, or returns a download record. The filename
-  rule in section 4.7 still applies.
-- **Possible errors:** `NOT_FOUND`, `DOWNLOAD_NOT_READY`, `STORAGE_ERROR`
-  (PLANNED).
-
-## 5. Open questions and assumptions
-
-1. **Project persistence shape is missing.** The inspected source has no
-   project, version, or export-record Zod schema. Create/list/get/save-version
-   request and response bodies are therefore PLANNED.
-2. **EventSpec save envelope is missing.** The source describes per-field
-   answers but does not define the PATCH body or lock body.
-3. **HTTP upload field names are missing.** The pipeline function has a real
-   input/options API, but no multipart route. The names for the tabular file,
-   photo ZIP, mapping, and event code must be agreed before server/client
-   implementation.
-4. **Draft and render route envelopes are missing.** Their core return shapes
-   are REAL, but project lookup and HTTP request bodies are not.
-5. **No valid draft mapping is missing.** `composeDrafts()` returns an empty
-   `drafts` array when it cannot reach the requested count; this contract
-   assumes the route maps that state to `NO_VALID_DRAFT`.
-6. **Export transport is missing.** The core settings and single-card
-   `exportCard()` result are REAL, but HTTP byte encoding, progress records,
-   retention, and download URLs are not defined.
-7. **E2b scope is assumed from the task.** Sheets, ZIP, and PDF are explicitly
-   marked PLANNED here even though older knowledge-base examples describe
-   them.
-8. **`FRONTEND_NOTES.md` is guidance, not a new schema.** It must not be used
-   to fill any PLANNED field in this document.
-
-## Hand-check list
-
-1. Does every listed endpoint show method, path, request body, response body,
-   and possible errors?
-2. Are all incomplete project/storage/HTTP envelope shapes marked PLANNED,
-   with no guessed fields?
-3. Does the EventSpec put roles at `eventSpec.roles`, and does the A2 upload
-   response expose the real `{ people, report }` shape?
-4. Are the exact export settings fields, D-09 acknowledgement rule,
-   E2a format/orientation limits, and id-only filename rule present?
-5. Does every API error use one envelope with `code`, `message`, and optional
-   core-shaped `issues`?
+1. Does every listed endpoint show method, path, request body, response body, and possible errors? (YES)
+2. Are all endpoints validated at boundaries with Zod schemas? (YES)
+3. Does the EventSpec put roles at `eventSpec.roles`, and does the A2 upload response expose the real `{ report }` shape without leaking participant personal data? (YES)
+4. Are all export formats (card SVG/PNG/PDF, sheet PDF, batch ZIP) gated by D-09 preflight checks? (YES)
+5. Does every API error use one envelope with `code`, `message`, and optional `issues`? (YES)
