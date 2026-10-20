@@ -6,9 +6,10 @@ import {
   evidenceCheck,
   isTracedInText,
   buildPrompt,
+  resolveThinkingLevel,
 } from "./gateway.js";
 
-describe("Task I: AI Gateway Tests", () => {
+describe("Task I & Task G: AI Gateway Tests", () => {
   describe("1. detectDesignType", () => {
     it("detects 'id-card' from keywords", () => {
       expect(detectDesignType("We need ID cards for 200 participants")).toBe("id-card");
@@ -88,7 +89,260 @@ describe("Task I: AI Gateway Tests", () => {
     });
   });
 
-  describe("4. parseBrief", () => {
+  describe("4. Task G: Thinking Level & Time Bounding", () => {
+    // Test a: Request body contains generationConfig.thinkingConfig.thinkingLevel "low" by default
+    it("Test a: request body contains generationConfig.thinkingConfig.thinkingLevel 'low' by default", async () => {
+      let capturedBody = null;
+      const mockFetch = vi.fn().mockImplementation(async (_url, options) => {
+        capturedBody = JSON.parse(options.body);
+        return {
+          ok: true,
+          json: async () => ({
+            candidates: [
+              {
+                content: {
+                  parts: [
+                    {
+                      text: JSON.stringify({
+                        name: "Tech Meet",
+                        venue: "SVNIT",
+                        dates: null,
+                        roles: null,
+                        fields: null,
+                        palette: null,
+                      }),
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+        };
+      });
+
+      const res = await parseBrief("ID cards for Tech Meet at SVNIT", {
+        apiKey: "dummy-key",
+        fetchFn: /** @type {any} */ (mockFetch),
+      });
+
+      expect(res.ok).toBe(true);
+      expect(capturedBody).toBeDefined();
+      expect(capturedBody.generationConfig?.thinkingConfig?.thinkingLevel).toBe("low");
+    });
+
+    // Test b: GEMINI_THINKING_LEVEL="" omits thinkingConfig; "high" sends "high"; "ultra" (bad input) falls back to "low"
+    it("Test b: GEMINI_THINKING_LEVEL='' omits thinkingConfig; 'high' sends 'high'; 'ultra' falls back to 'low'", async () => {
+      // Unit check resolveThinkingLevel
+      expect(resolveThinkingLevel("")).toBeNull();
+      expect(resolveThinkingLevel("high")).toBe("high");
+      expect(resolveThinkingLevel("minimal")).toBe("minimal");
+      expect(resolveThinkingLevel("medium")).toBe("medium");
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      expect(resolveThinkingLevel("ultra")).toBe("low");
+      expect(logSpy).toHaveBeenCalledWith("[AI Intake] Invalid GEMINI_THINKING_LEVEL, falling back to low");
+      logSpy.mockRestore();
+
+      // Integration in parseBrief with thinkingLevel: "" (omit)
+      let bodyOmit = null;
+      const mockFetchOmit = vi.fn().mockImplementation(async (_url, options) => {
+        bodyOmit = JSON.parse(options.body);
+        return {
+          ok: true,
+          json: async () => ({
+            candidates: [
+              {
+                content: {
+                  parts: [{ text: JSON.stringify({ name: "Tech", venue: "SVNIT" }) }],
+                },
+              },
+            ],
+          }),
+        };
+      });
+
+      await parseBrief("ID cards for Tech at SVNIT", {
+        apiKey: "dummy-key",
+        fetchFn: /** @type {any} */ (mockFetchOmit),
+        thinkingLevel: "",
+      });
+
+      expect(bodyOmit.generationConfig?.thinkingConfig).toBeUndefined();
+
+      // Integration with thinkingLevel: "high"
+      let bodyHigh = null;
+      const mockFetchHigh = vi.fn().mockImplementation(async (_url, options) => {
+        bodyHigh = JSON.parse(options.body);
+        return {
+          ok: true,
+          json: async () => ({
+            candidates: [
+              {
+                content: {
+                  parts: [{ text: JSON.stringify({ name: "Tech", venue: "SVNIT" }) }],
+                },
+              },
+            ],
+          }),
+        };
+      });
+
+      await parseBrief("ID cards for Tech at SVNIT", {
+        apiKey: "dummy-key",
+        fetchFn: /** @type {any} */ (mockFetchHigh),
+        thinkingLevel: "high",
+      });
+
+      expect(bodyHigh.generationConfig?.thinkingConfig?.thinkingLevel).toBe("high");
+
+      // Integration with thinkingLevel: "ultra" (invalid -> fallback to low)
+      let bodyUltra = null;
+      const mockFetchUltra = vi.fn().mockImplementation(async (_url, options) => {
+        bodyUltra = JSON.parse(options.body);
+        return {
+          ok: true,
+          json: async () => ({
+            candidates: [
+              {
+                content: {
+                  parts: [{ text: JSON.stringify({ name: "Tech", venue: "SVNIT" }) }],
+                },
+              },
+            ],
+          }),
+        };
+      });
+
+      await parseBrief("ID cards for Tech at SVNIT", {
+        apiKey: "dummy-key",
+        fetchFn: /** @type {any} */ (mockFetchUltra),
+        thinkingLevel: "ultra",
+      });
+
+      expect(bodyUltra.generationConfig?.thinkingConfig?.thinkingLevel).toBe("low");
+    });
+
+    // Test c: 400 mentioning thinking retried once without thinkingConfig; 400 not mentioning thinking not retried
+    it("Test c: 400 mentioning thinking is retried once without thinkingConfig; other 400 is not retried", async () => {
+      let callCount = 0;
+      let secondCallBody = null;
+
+      const mockFetchThinking400 = vi.fn().mockImplementation(async (_url, options) => {
+        callCount++;
+        if (callCount === 1) {
+          return {
+            ok: false,
+            status: 400,
+            text: async () => "Error: thinkingConfig is not supported on this model endpoint",
+          };
+        }
+        secondCallBody = JSON.parse(options.body);
+        return {
+          ok: true,
+          json: async () => ({
+            candidates: [
+              {
+                content: {
+                  parts: [{ text: JSON.stringify({ name: "Tech 2026", venue: "SVNIT" }) }],
+                },
+              },
+            ],
+          }),
+        };
+      });
+
+      const resThinking = await parseBrief("ID cards for Tech 2026 at SVNIT", {
+        apiKey: "dummy-key",
+        fetchFn: /** @type {any} */ (mockFetchThinking400),
+      });
+
+      expect(resThinking.ok).toBe(true);
+      expect(callCount).toBe(2);
+      // Prove second call omitted thinkingConfig
+      expect(secondCallBody.generationConfig?.thinkingConfig).toBeUndefined();
+
+      // Case 2: 400 NOT mentioning thinking -> must NOT be retried
+      let nonThinkingCalls = 0;
+      const mockFetchOther400 = vi.fn().mockImplementation(async () => {
+        nonThinkingCalls++;
+        return {
+          ok: false,
+          status: 400,
+          text: async () => "Error: prompt violates content policy",
+        };
+      });
+
+      const resOther = await parseBrief("ID cards for Tech 2026 at SVNIT", {
+        apiKey: "dummy-key",
+        fetchFn: /** @type {any} */ (mockFetchOther400),
+      });
+
+      expect(resOther.ok).toBe(false);
+      expect(nonThinkingCalls).toBe(1); // Exactly 1 call, zero retry!
+    });
+
+    // Test d: Fetch that never resolves (abort via signal): returns failure in under the deadline with emptySpec
+    it("Test d: fetch that never resolves is aborted via signal and returns 422 fallback with emptySpec", async () => {
+      const mockFetchHangs = vi.fn().mockImplementation((_url, options) => {
+        return new Promise((_, reject) => {
+          if (options?.signal) {
+            options.signal.addEventListener("abort", () => {
+              const err = new Error("Operation aborted");
+              err.name = "AbortError";
+              reject(err);
+            });
+          }
+        });
+      });
+
+      const t0 = Date.now();
+      const res = await parseBrief("ID cards for Hang Fest", {
+        apiKey: "dummy-key",
+        fetchFn: /** @type {any} */ (mockFetchHangs),
+        timeoutMs: 30,
+        totalDeadlineMs: 70,
+      });
+      const elapsed = Date.now() - t0;
+
+      expect(res.ok).toBe(false);
+      if (!res.ok) {
+        expect(res.error.code).toBe("BRIEF_PARSE_FAILED");
+        expect(res.emptySpec).toBeDefined();
+        expect(res.emptySpec.designType).toBe("id-card");
+      }
+      expect(elapsed).toBeLessThan(200); // Bounded
+    });
+
+    // Test e: Total elapsed never exceeds deadline plus small margin
+    it("Test e: total elapsed never exceeds deadline plus a small margin", async () => {
+      const mockFetchDelayed = vi.fn().mockImplementation((_url, options) => {
+        return new Promise((_, reject) => {
+          if (options?.signal) {
+            options.signal.addEventListener("abort", () => {
+              const err = new Error("Aborted");
+              err.name = "AbortError";
+              reject(err);
+            });
+          }
+        });
+      });
+
+      const t0 = Date.now();
+      const res = await parseBrief("ID cards for Fast Deadline Fest", {
+        apiKey: "dummy-key",
+        fetchFn: /** @type {any} */ (mockFetchDelayed),
+        timeoutMs: 80,
+        totalDeadlineMs: 40,
+      });
+      const elapsed = Date.now() - t0;
+
+      expect(res.ok).toBe(false);
+      // Total elapsed should stay close to deadline (40ms) with small margin
+      expect(elapsed).toBeLessThan(120);
+    });
+  });
+
+  describe("5. parseBrief General & Privacy Tests", () => {
     it("parses brief successfully with status: provided, source: brief, confirmed: false", async () => {
       const briefText = "ID cards for 24-hour Hackathon at SVNIT Surat on 2026-10-20 with 200 participants.";
       const mockApiResponse = {
@@ -152,9 +406,11 @@ describe("Task I: AI Gateway Tests", () => {
         expect(res.spec.roles[0].id).toBe("participants");
       }
 
-      // Verify privacy logging (KB 7.7): logs only length and outcome, never brief text or key
+      // Verify privacy logging (Requirement 5): only brief length, outcome, attempts, and elapsed ms
       expect(logSpy).toHaveBeenCalledWith(
-        `[AI Intake] brief length: ${briefText.length}, outcome: ok`
+        expect.stringMatching(
+          new RegExp(`^\\[AI Intake\\] brief length: ${briefText.length}, outcome: ok, attempts: 1, elapsed: \\d+ms$`)
+        )
       );
       logSpy.mockRestore();
     });
@@ -247,7 +503,7 @@ describe("Task I: AI Gateway Tests", () => {
       }
     });
 
-    it("D-10 Privacy Test: proves request body contains only brief text and schema, never participant personal data", async () => {
+    it("Test f (D-10 Privacy Test): proves request body contains only brief text and schema, never participant personal data", async () => {
       // Simulate environment having participant data in memory
       const fakeParticipant = {
         name: "Priya Sharma",

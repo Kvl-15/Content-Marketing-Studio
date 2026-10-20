@@ -11,6 +11,31 @@
 
 ## Done
 
+- Task G: Gemini Gateway Speed, Bounded Deadlines and Model Fix (20 October 2026)
+  - Files:
+    - `server/ai/gateway.js`, `server/ai/gateway.test.js`
+    - `scripts/intake-demo.js`
+    - `.env.example`
+    - `docs/API_CONTRACT.md`
+    - `docs/PROGRESS.md`
+  - Replaced wrong model name `gemini-3.8-flash` with `gemini-3-flash-preview` across all files (`gateway.js`, `.env.example`, `API_CONTRACT.md`, `scripts/intake-demo.js`, tests). Verified zero mentions of `3.8-flash` remain in project files.
+  - Thinking level:
+    - Added `generationConfig.thinkingConfig.thinkingLevel = "low"` by default, configurable via `GEMINI_THINKING_LEVEL` (`minimal`, `low`, `medium`, `high`, or empty string `""` to omit `thinkingConfig`).
+    - Invalid values fall back to `"low"` with a privacy-safe console log line that omits the raw value and any secrets.
+  - Thinking fallback:
+    - On HTTP 400 with response text mentioning `"thinking"`, retries once without `thinkingConfig`. This retry does not count against normal attempts. Non-thinking 400 errors fail immediately without retry.
+  - Bounded execution & time limits:
+    - Enforced an overall 35,000 ms deadline for `parseBrief` (`options.totalDeadlineMs`), with `Math.min(15000, timeLeft)` per attempt timeout (`options.timeoutMs`).
+    - At most 2 normal attempts. Abort signal terminates hanging requests. Fails closed with 422 `BRIEF_PARSE_FAILED` or `AI_UNAVAILABLE` and `emptySpec` (D-12).
+  - Privacy-safe logging (D-10):
+    - Logs brief length, outcome, attempts, and elapsed ms only (`[AI Intake] brief length: N, outcome: ok|retry|failed, attempts: A, elapsed: Tms`). Never logs brief text, API key, or response bodies.
+  - Demo CLI update:
+    - `scripts/intake-demo.js` prints model name, thinking level used, attempts, elapsed ms, and outcome without logging brief text, keys, or response bodies.
+  - Verification:
+    - 47 tests passed across `server/ai` and `server/intake` (`npx vitest run server/ai server/intake`).
+    - ESLint clean (0 errors, 0 warnings) on `npx eslint server/ai scripts/intake-demo.js`.
+    - No real API calls made in automated tests.
+
 - Task I: Intake Logic + Gemini Gateway (20 October 2026)
   - Files:
     - `server/intake/emptySpec.js`, `server/intake/gaps.js`, `server/intake/questions.js`, `server/intake/applyAnswer.js`, `server/intake/lockSpec.js`, `server/intake/index.js`, `server/intake/intake.test.js`, `server/intake/routes.test.js`

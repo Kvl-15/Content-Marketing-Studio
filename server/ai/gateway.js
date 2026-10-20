@@ -52,6 +52,36 @@ export function detectDesignType(text) {
 }
 
 /**
+ * Allowed thinking levels for Gemini thinking models.
+ */
+const ALLOWED_THINKING_LEVELS = new Set(["minimal", "low", "medium", "high"]);
+
+/**
+ * Resolves the thinking level configuration.
+ * - undefined / null -> default "low"
+ * - "" (empty string) -> null (omit thinkingConfig completely)
+ * - "minimal" | "low" | "medium" | "high" -> normalized level
+ * - invalid value -> fallback to "low" with one privacy-safe log line
+ *
+ * @param {string | undefined | null} rawInput
+ * @returns {string | null}
+ */
+export function resolveThinkingLevel(rawInput) {
+  if (rawInput === undefined || rawInput === null) {
+    return "low";
+  }
+  if (typeof rawInput === "string" && rawInput.trim() === "") {
+    return null;
+  }
+  const normalized = typeof rawInput === "string" ? rawInput.trim().toLowerCase() : "";
+  if (ALLOWED_THINKING_LEVELS.has(normalized)) {
+    return normalized;
+  }
+  console.log("[AI Intake] Invalid GEMINI_THINKING_LEVEL, falling back to low");
+  return "low";
+}
+
+/**
  * Checks if a string or number can be traced in the original brief text.
  * Requires word-boundary match for words and numbers to avoid false positives.
  *
@@ -229,39 +259,76 @@ ${brief}`;
  *   model?: string;
  *   apiKey?: string;
  *   timeoutMs?: number;
+ *   totalDeadlineMs?: number;
+ *   thinkingLevel?: string | null;
  * }} [options]
  * @returns {Promise<{
  *   ok: true;
  *   spec: any;
  *   designType: string | null;
+ *   meta: {
+ *     model: string;
+ *     thinkingLevel: string | null;
+ *     attempts: number;
+ *     elapsedMs: number;
+ *     outcome: string;
+ *   };
  * } | {
  *   ok: false;
  *   error: { code: string; message: string; details?: any };
  *   emptySpec: any;
+ *   meta: {
+ *     model: string;
+ *     thinkingLevel: string | null;
+ *     attempts: number;
+ *     elapsedMs: number;
+ *     outcome: string;
+ *   };
  * }>}
  */
 export async function parseBrief(briefText, options = {}) {
+  const startTime = Date.now();
   const brief = typeof briefText === "string" ? briefText.trim() : "";
   const detectedType = detectDesignType(brief);
   const fallbackSpec = emptySpec(detectedType);
+
+  const model = options.model || process.env.GEMINI_MODEL || "gemini-3-flash-preview";
+  const apiKey = options.apiKey || process.env.GEMINI_API_KEY;
+  const today = options.today || "2026-10-20";
+  const fetchFn = options.fetchFn || globalThis.fetch;
+
+  // Time limits (Requirement 4): default 35s overall deadline, 15s per-attempt timeout
+  const totalDeadlineMs = options.totalDeadlineMs ?? 35000;
+  const perAttemptTimeout = options.timeoutMs ?? 15000;
+
+  // Thinking level resolution (Requirement 2)
+  const envOrOptThinking =
+    options.thinkingLevel !== undefined
+      ? options.thinkingLevel
+      : process.env.GEMINI_THINKING_LEVEL;
+  const initialThinkingLevel = resolveThinkingLevel(envOrOptThinking);
+  let currentThinkingLevel = initialThinkingLevel;
+  let thinkingFallbackUsed = false;
 
   if (!brief) {
     return {
       ok: false,
       error: { code: "EMPTY_BRIEF", message: "Brief text is required." },
       emptySpec: fallbackSpec,
+      meta: {
+        model,
+        thinkingLevel: initialThinkingLevel,
+        attempts: 0,
+        elapsedMs: Date.now() - startTime,
+        outcome: "failed",
+      },
     };
   }
 
-  const apiKey = options.apiKey || process.env.GEMINI_API_KEY;
-  const model = options.model || process.env.GEMINI_MODEL || "gemini-3.8-flash";
-  const today = options.today || "2026-10-20";
-  const fetchFn = options.fetchFn || globalThis.fetch;
-  const timeoutMs = options.timeoutMs || 15000;
-
   if (!apiKey) {
-    // KB 7.7 logging: log only brief length and outcome
-    console.log(`[AI Intake] brief length: ${brief.length}, outcome: failed (missing API key)`);
+    // KB 7.7 logging: log only brief length, outcome, attempts, and elapsed ms
+    const elapsedMs = Date.now() - startTime;
+    console.log(`[AI Intake] brief length: ${brief.length}, outcome: failed (missing API key), attempts: 0, elapsed: ${elapsedMs}ms`);
     return {
       ok: false,
       error: {
@@ -269,30 +336,58 @@ export async function parseBrief(briefText, options = {}) {
         message: "Gemini API key is not configured (form fallback).",
       },
       emptySpec: fallbackSpec,
+      meta: {
+        model,
+        thinkingLevel: initialThinkingLevel,
+        attempts: 0,
+        elapsedMs,
+        outcome: "failed",
+      },
     };
   }
 
   const endpointUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
-  let attempts = 0;
+  let normalAttempts = 0;
+  let totalAttempts = 0;
   let lastError = null;
+  let isThinkingRetry = false;
 
-  while (attempts < 2) {
-    attempts++;
+  while (normalAttempts < 2) {
+    const elapsedNow = Date.now() - startTime;
+    const timeLeft = totalDeadlineMs - elapsedNow;
+    if (timeLeft <= 0) {
+      lastError = new Error("Deadline of 35000ms exceeded");
+      break;
+    }
+
+    const attemptTimeout = Math.max(1, Math.min(perAttemptTimeout, timeLeft));
+    totalAttempts++;
+
+    if (!isThinkingRetry) {
+      normalAttempts++;
+    }
+    isThinkingRetry = false;
+
     const prompt = buildPrompt(brief, today, lastError?.message);
 
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+      const timeoutId = setTimeout(() => controller.abort(), attemptTimeout);
+
+      const generationConfig = {
+        responseMimeType: "application/json",
+        ...(currentThinkingLevel
+          ? { thinkingConfig: { thinkingLevel: currentThinkingLevel } }
+          : {}),
+      };
 
       const response = await fetchFn(endpointUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: {
-            responseMimeType: "application/json",
-          },
+          generationConfig,
         }),
         signal: controller.signal,
       });
@@ -301,6 +396,21 @@ export async function parseBrief(briefText, options = {}) {
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => "");
+
+        // Requirement 3: Thinking fallback on HTTP 400 mentioning "thinking"
+        if (response.status === 400) {
+          if (!thinkingFallbackUsed && /thinking/i.test(errorText)) {
+            thinkingFallbackUsed = true;
+            currentThinkingLevel = null; // retry without thinkingConfig
+            isThinkingRetry = true; // does not count as a normal attempt
+            lastError = new Error(`HTTP 400 (thinking fallback): ${errorText.slice(0, 200)}`);
+            continue;
+          }
+          // Do not retry other 400s
+          lastError = new Error(`HTTP 400: ${errorText.slice(0, 200)}`);
+          break;
+        }
+
         throw new Error(`HTTP ${response.status}: ${errorText.slice(0, 200)}`);
       }
 
@@ -377,24 +487,34 @@ export async function parseBrief(briefText, options = {}) {
         }));
       }
 
-      const outcome = attempts === 1 ? "ok" : "retry";
-      console.log(`[AI Intake] brief length: ${brief.length}, outcome: ${outcome}`);
+      const elapsedMs = Date.now() - startTime;
+      const outcome = totalAttempts === 1 ? "ok" : "retry";
+      console.log(`[AI Intake] brief length: ${brief.length}, outcome: ${outcome}, attempts: ${totalAttempts}, elapsed: ${elapsedMs}ms`);
 
       return {
         ok: true,
         spec: assembledSpec,
         designType: detectedType,
+        meta: {
+          model,
+          thinkingLevel: initialThinkingLevel,
+          attempts: totalAttempts,
+          elapsedMs,
+          outcome,
+        },
       };
     } catch (err) {
       lastError = err;
-      if (attempts < 2) {
-        console.log(`[AI Intake] brief length: ${brief.length}, outcome: retry`);
+      if (normalAttempts < 2) {
+        const elapsedSoFar = Date.now() - startTime;
+        console.log(`[AI Intake] brief length: ${brief.length}, outcome: retry, attempts: ${totalAttempts}, elapsed: ${elapsedSoFar}ms`);
       }
     }
   }
 
-  // On second failure, log failure and return empty spec alongside error (KB 7.1 step 3)
-  console.log(`[AI Intake] brief length: ${brief.length}, outcome: failed`);
+  // On failure, log and return empty spec alongside error (KB 7.1 step 3)
+  const elapsedMs = Date.now() - startTime;
+  console.log(`[AI Intake] brief length: ${brief.length}, outcome: failed, attempts: ${totalAttempts}, elapsed: ${elapsedMs}ms`);
   return {
     ok: false,
     error: {
@@ -402,5 +522,12 @@ export async function parseBrief(briefText, options = {}) {
       message: `Failed to parse brief after retry: ${lastError?.message || "Unknown error"}`,
     },
     emptySpec: fallbackSpec,
+    meta: {
+      model,
+      thinkingLevel: initialThinkingLevel,
+      attempts: totalAttempts,
+      elapsedMs,
+      outcome: "failed",
+    },
   };
 }

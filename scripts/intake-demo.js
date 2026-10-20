@@ -4,9 +4,8 @@
  * CLI Demonstration of the Intake workflow + Gemini AI Gateway.
  * Works with `node --env-file=.env scripts/intake-demo.js`.
  *
- * Key set: parses a sample brief and prints a concise summary (values, statuses, remaining gaps).
- * Key unset: demonstrates the pure form fallback path (D-12).
- * Never prints or leaks the API key.
+ * Prints: model name, thinking level used, number of attempts, elapsed ms, outcome (ok / retry / failed).
+ * Never prints brief text, API key, or raw response bodies (Requirement 6, D-10).
  */
 
 import { parseBrief } from "../server/ai/gateway.js";
@@ -15,7 +14,7 @@ import { findGaps } from "../server/intake/gaps.js";
 
 async function run() {
   const apiKey = process.env.GEMINI_API_KEY;
-  const model = process.env.GEMINI_MODEL || "gemini-3.8-flash";
+  const model = process.env.GEMINI_MODEL || "gemini-3-flash-preview";
 
   console.log("==================================================");
   console.log("   ACM STUDIO - INTAKE & AI GATEWAY DEMO");
@@ -23,20 +22,24 @@ async function run() {
 
   if (apiKey && apiKey.trim() !== "") {
     console.log("Mode: Gemini AI Gateway Active");
-    console.log(`Configured Model: ${model}`);
-    console.log("API Key: [CONFIGURED - NEVER LOGGED OR PRINTED]\n");
+    console.log("Parsing brief via Gemini REST API...\n");
 
     const sampleBrief =
       "We need ID cards for the 24-hour Hackathon at SVNIT Surat on 2026-10-20. " +
       "We expect 200 participants and 15 mentors. Participant cards should display name, role, and organization.";
 
-    console.log(`Input Brief: "${sampleBrief}"\n`);
-    console.log("Parsing brief via Gemini REST API...");
-
     const result = await parseBrief(sampleBrief, {
       today: "2026-10-20",
       model,
     });
+
+    // Requirement 6: print model name, thinking level used, attempts, elapsed ms, outcome
+    console.log("[EXECUTION SUMMARY]");
+    console.log(`- Model name:          ${result.meta.model}`);
+    console.log(`- Thinking level used: ${result.meta.thinkingLevel ?? "omitted"}`);
+    console.log(`- Number of attempts:  ${result.meta.attempts}`);
+    console.log(`- Elapsed ms:          ${result.meta.elapsedMs} ms`);
+    console.log(`- Outcome:             ${result.meta.outcome}`);
 
     if (result.ok) {
       console.log("\n[SUCCESS] Brief Parsed into EventSpec scaffold:");
