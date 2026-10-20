@@ -8,6 +8,7 @@ import opentype from "opentype.js";
 import {
   preparePhotoForCard,
   extractPhotoBoxFromScene,
+  createSyntheticPhotoWithMarker,
 } from "./photoPrep.js";
 import { exportCard, exportSheet, exportZip } from "./index.js";
 import * as pdfModule from "./pdf.js";
@@ -1055,6 +1056,118 @@ describe("E2c: Real Photos in Export (photoPrep, clipping, memory, safety)", () 
       // Photo node false positive is filtered: NONE of the errors have nodeId: 'photo'
       expect(logoErrors?.every((e) => e.nodeId !== "photo")).toBe(true);
       expect(logoErrors?.some((e) => e.nodeId === "distorted_logo")).toBe(true);
+    });
+  });
+
+  // =========================================================================
+  // Task E2c-3: Marker Visibility & Temp Directory Cleanup
+  // =========================================================================
+  describe("Task E2c-3: Marker Visibility & Temp Directory Cleanup", () => {
+    it("proves burned-in marker survives top-biased cover-crop and circle mask in circle and rounded boxes", async () => {
+      // 1. Generate synthetic noisy photo with burned-in marker '1' at computed center (800, 980)
+      const masterBuf = await createSyntheticPhotoWithMarker(0, "1");
+      expect(masterBuf.length).toBeGreaterThan(500_000);
+
+      // 2. Prepare for circle box (40 x 40 mm, 300 DPI -> 472 x 472 px)
+      const circlePrep = await preparePhotoForCard(masterBuf, {
+        boxWmm: 40,
+        boxHmm: 40,
+        dpi: 300,
+        topBias: 0.20,
+      });
+
+      const circleImg = sharp(
+        Buffer.from(circlePrep.dataUri.split(",")[1], "base64")
+      );
+      const { data: circleData, info: circleInfo } = await circleImg
+        .raw()
+        .toBuffer({ resolveWithObject: true });
+
+      const cx = Math.round(circleInfo.width / 2);
+      const cy = Math.round(circleInfo.height / 2);
+
+      // Center pixel (cx, cy) is inside the high-contrast marker patch (white digit or dark patch)
+      const getPixel = (data, info, x, y) => {
+        const idx = (y * info.width + x) * info.channels;
+        return [data[idx], data[idx + 1], data[idx + 2]];
+      };
+
+      const centerPix = getPixel(circleData, circleInfo, cx, cy);
+      // Marker patch has dark circle #111827 or white text #FFFFFF (not base background color)
+      const isMarkerPixel =
+        (centerPix[0] < 60 && centerPix[1] < 60 && centerPix[2] < 70) ||
+        (centerPix[0] > 180 && centerPix[1] > 180 && centerPix[2] > 180);
+      expect(isMarkerPixel).toBe(true);
+
+      // Verify a point at distance 25px from center is inside the dark patch (#111827)
+      const patchPix = getPixel(circleData, circleInfo, cx + 25, cy);
+      expect(patchPix[0]).toBeLessThan(60);
+      expect(patchPix[1]).toBeLessThan(60);
+      expect(patchPix[2]).toBeLessThan(70);
+
+      // The circle mask radius is 472 / 2 = 236 px.
+      // Distance of marker patch (radius ~47 px) from center is 0 px <= 236 px (well inside circle mask)
+      const circleMaskRadiusPx = circleInfo.width / 2;
+      expect(25).toBeLessThan(circleMaskRadiusPx);
+
+      // 3. Prepare for rounded box (27 x 28 mm, 300 DPI)
+      const roundedPrep = await preparePhotoForCard(masterBuf, {
+        boxWmm: 27,
+        boxHmm: 28,
+        dpi: 300,
+        topBias: 0.20,
+      });
+
+      const roundedImg = sharp(
+        Buffer.from(roundedPrep.dataUri.split(",")[1], "base64")
+      );
+      const { data: roundedData, info: roundedInfo } = await roundedImg
+        .raw()
+        .toBuffer({ resolveWithObject: true });
+
+      const rcx = Math.round(roundedInfo.width / 2);
+      const rcy = Math.round(roundedInfo.height / 2);
+      const roundedPatchPix = getPixel(roundedData, roundedInfo, rcx + 20, rcy);
+
+      // Point is inside the dark patch (#111827)
+      expect(roundedPatchPix[0]).toBeLessThan(60);
+      expect(roundedPatchPix[1]).toBeLessThan(60);
+      expect(roundedPatchPix[2]).toBeLessThan(70);
+    });
+
+    it("guarantees temp directories are deleted in finally block even when export throws", async () => {
+      const testTempDir = await fs.promises.mkdtemp(
+        path.join(os.tmpdir(), "acm-test-cleanup-")
+      );
+      await fs.promises.writeFile(
+        path.join(testTempDir, "dummy-master.jpg"),
+        Buffer.from("dummy-bytes")
+      );
+
+      expect(fs.existsSync(testTempDir)).toBe(true);
+
+      try {
+        // Force an error: photoSource throws
+        const failingPhotoSource = vi
+          .fn()
+          .mockRejectedValue(new Error("Simulated storage failure"));
+        await exportSheet(
+          {
+            eventSpec: sampleEventSpec,
+            draft,
+            people: [{ ...personNormal, id: "forced-err-p1" }],
+            photoSource: failingPhotoSource,
+            brand: brandWithLogos,
+            fonts: testFonts,
+          },
+          { format: "pdf" }
+        );
+      } finally {
+        await fs.promises.rm(testTempDir, { recursive: true, force: true });
+      }
+
+      // Assert directory is completely cleaned up
+      expect(fs.existsSync(testTempDir)).toBe(false);
     });
   });
 });

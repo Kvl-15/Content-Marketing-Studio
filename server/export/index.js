@@ -20,5 +20,6 @@ export {
 export {
   preparePhotoForCard,
   extractPhotoBoxFromScene,
+  createSyntheticPhotoWithMarker,
   PhotoPrepError,
 } from "./photoPrep.js";

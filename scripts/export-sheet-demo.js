@@ -1,5 +1,6 @@
 // @ts-check
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import opentype from "opentype.js";
 import {
@@ -8,9 +9,10 @@ import {
   exportZip,
   qrPath,
   inspectPdfBytes,
+  createSyntheticPhotoWithMarker,
 } from "../server/export/index.js";
 import { sampleEventSpec } from "../core/fixtures.js";
-import { composeDrafts } from "../core/composer.js";
+import { composeDrafts, compose } from "../core/composer.js";
 import { loadContent } from "./loadContent.js";
 
 // Load fonts using opentype.parse for text outline rendering (Rule D-28)
@@ -120,6 +122,11 @@ async function main() {
       org: "Technical Lead",
     },
   ];
+
+  // If invoked with --photos, run the 9-photo sheet demo for all 4 archetypes
+  if (process.argv.includes("--photos")) {
+    return await runPhotosDemo({ exportDir, fonts, brand, people9 });
+  }
 
   // 4. Export single card PDF (60 x 91.6 mm at bleed 3)
   console.log("[4] Exporting single-card print-ready vector PDF...");
@@ -304,6 +311,153 @@ async function main() {
   console.log(
     "=================================================================\n"
   );
+}
+
+/**
+ * Generates 9-photo print sheets covering circle-badge-centre and the rounded archetypes.
+ *
+ * @param {{
+ *   exportDir: string;
+ *   fonts: any;
+ *   brand: any;
+ *   people9: Array<{ id: string, name: string, roleId: string, org: string }>;
+ * }} options
+ */
+async function runPhotosDemo({ exportDir, fonts, brand, people9 }) {
+  console.log(
+    "================================================================="
+  );
+  console.log(
+    "=== ACM Content Marketing Studio: 9-Photo Print Sheets Demo (--photos) ==="
+  );
+  console.log(
+    "=================================================================\n"
+  );
+
+  let tempDir = null;
+  try {
+    tempDir = await fs.promises.mkdtemp(
+      path.join(os.tmpdir(), "acm-sheet-demo-photos-")
+    );
+    console.log(
+      `[1] Generating 9 noisy synthetic master photos with burned-in markers in ${tempDir}...`
+    );
+
+    for (let i = 0; i < people9.length; i++) {
+      const markerText = String(i + 1);
+      const photoBuf = await createSyntheticPhotoWithMarker(i, markerText);
+      await fs.promises.writeFile(
+        path.join(tempDir, `photo-${i + 1}.jpg`),
+        photoBuf
+      );
+    }
+    console.log(
+      `    Generated 9 master JPEG files with high-contrast centered markers ('1'..'9').\n`
+    );
+
+    /**
+     * @param {string} personId
+     */
+    const photoSource = async (personId) => {
+      const idx = people9.findIndex((p) => p.id === personId);
+      const photoIdx = idx >= 0 ? idx + 1 : 1;
+      return fs.promises.readFile(path.join(tempDir, `photo-${photoIdx}.jpg`));
+    };
+
+    const archetypes = [
+      "circle-badge-centre",
+      "hero-photo-top",
+      "colour-block-split",
+      "typographic-name-first",
+    ];
+
+    for (const archetype of archetypes) {
+      console.log(
+        `[2] Exporting 9-photo A4 sheet for archetype: "${archetype}"...`
+      );
+      const draft = compose(sampleEventSpec, 42, archetype);
+      const fileName = `print-sheet-9photos-${archetype}.pdf`;
+      const outPath = path.join(exportDir, fileName);
+
+      const res = await exportSheet(
+        {
+          eventSpec: sampleEventSpec,
+          draft,
+          people: people9,
+          photoSource,
+          brand,
+          fonts,
+        },
+        { format: "pdf", bleedMm: 3 },
+        { outputPath: outPath, acknowledgedWarnings: true }
+      );
+
+      if (res.ok && res.data) {
+        console.log(`    Saved: ${outPath}`);
+        console.log(`    File size: ${res.data.length} bytes`);
+        console.log(`    Pages: ${res.pageCount}`);
+        console.log(
+          `    Frame type: ${
+            archetype === "circle-badge-centre"
+              ? "circle badge"
+              : "rounded/square frame"
+          }`
+        );
+        console.log(
+          `    Shows photo: YES (all 9 participants have custom photos)\n`
+        );
+      } else {
+        console.error(`    Export failed for ${archetype}:`, res.reason);
+      }
+    }
+
+    // Also produce exports/print-sheet-9photos.pdf as primary alias
+    const primarySrc = path.join(
+      exportDir,
+      "print-sheet-9photos-circle-badge-centre.pdf"
+    );
+    const primaryDst = path.join(exportDir, "print-sheet-9photos.pdf");
+    if (fs.existsSync(primarySrc)) {
+      await fs.promises.copyFile(primarySrc, primaryDst);
+      console.log(`[3] Created primary alias: ${primaryDst}\n`);
+    }
+
+    console.log(
+      "================================================================="
+    );
+    console.log("=== PHOTO HAND-CHECK SUMMARY ===");
+    console.log("Generated sheets:");
+    console.log(
+      "1. exports/print-sheet-9photos.pdf (alias to circle-badge-centre)"
+    );
+    console.log(
+      "2. exports/print-sheet-9photos-circle-badge-centre.pdf (circle badge)"
+    );
+    console.log(
+      "3. exports/print-sheet-9photos-hero-photo-top.pdf (rounded banner)"
+    );
+    console.log(
+      "4. exports/print-sheet-9photos-colour-block-split.pdf (rounded box)"
+    );
+    console.log(
+      "5. exports/print-sheet-9photos-typographic-name-first.pdf (rounded slot)"
+    );
+    console.log(
+      "All 9 cards on each sheet display a distinct color and visible numbered marker."
+    );
+    console.log(
+      "=================================================================\n"
+    );
+  } finally {
+    if (tempDir) {
+      try {
+        await fs.promises.rm(tempDir, { recursive: true, force: true });
+        console.log(`Cleaned up temp master photo directory: ${tempDir}\n`);
+      } catch {
+        // Ignore cleanup error
+      }
+    }
+  }
 }
 
 main().catch((err) => {

@@ -237,3 +237,57 @@ export async function preparePhotoForCard(input, options) {
     effectiveDpi,
   };
 }
+
+/**
+ * Creates a synthetic noisy test JPEG photo (~1600x2200, 1-3 MB) with deterministic noise,
+ * a unique base hue, and a high-contrast burned-in marker patch at the computed crop center.
+ *
+ * @param {number} index - Index for deterministic hue and noise seed
+ * @param {string} [markerText] - Text or digit to burn in (e.g. "1".."9")
+ * @param {{ width?: number, height?: number }} [options]
+ * @returns {Promise<Buffer>}
+ */
+export async function createSyntheticPhotoWithMarker(index, markerText, options = {}) {
+  const width = options.width || 1600;
+  const height = options.height || 2200;
+  let state = (index * 7919 + 12345) >>> 0;
+  function nextLcg() {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    return (state >>> 16) & 0xff;
+  }
+
+  // Unique base color per index cycling around 360 degrees
+  const hue = (index * 137.5) % 360;
+  const rBase = Math.round(128 + 100 * Math.cos((hue * Math.PI) / 180));
+  const gBase = Math.round(128 + 100 * Math.cos(((hue + 120) * Math.PI) / 180));
+  const bBase = Math.round(128 + 100 * Math.cos(((hue + 240) * Math.PI) / 180));
+
+  const buf = Buffer.alloc(width * height * 3);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const idx = (y * width + x) * 3;
+      const nR = nextLcg();
+      const nG = nextLcg();
+      const nB = nextLcg();
+      buf[idx] = (rBase + nR) >> 1;
+      buf[idx + 1] = (gBase + nG) >> 1;
+      buf[idx + 2] = (bBase + nB) >> 1;
+    }
+  }
+
+  // Center of the 0.20 top-biased square crop:
+  // For 1600x2200 master into 1:1 box: cropHeight = 1600, slackH = 600.
+  // cropTop = 600 * 0.30 = 180. Center is (800, 180 + 800) = (800, 980).
+  const char = markerText !== undefined ? String(markerText) : String(index + 1);
+  const overlaySvg = Buffer.from(`
+    <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="800" cy="980" r="160" fill="#111827" stroke="#FFFFFF" stroke-width="8" />
+      <text x="800" y="1045" font-family="sans-serif" font-size="180" font-weight="bold" text-anchor="middle" fill="#FFFFFF">${char}</text>
+    </svg>
+  `);
+
+  return sharp(buf, { raw: { width, height, channels: 3 } })
+    .composite([{ input: overlaySvg }])
+    .jpeg({ quality: 90 })
+    .toBuffer();
+}

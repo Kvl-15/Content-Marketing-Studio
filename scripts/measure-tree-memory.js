@@ -232,9 +232,16 @@ async function run() {
     console.log(`PDF File Size            : ${(pdfSize / (1024 * 1024)).toFixed(2)} MB (${pdfSize} bytes)`);
     console.log(`Execution Time (Total)   : ${elapsed} s`);
     if (res.timings) {
-      console.log(`  - Photo Preparation    : ${res.timings.photoPrepSec} s`);
-      console.log(`  - SVG Assembly         : ${res.timings.svgAssemblySec} s`);
-      console.log(`  - Chromium Print       : ${res.timings.chromiumPrintSec} s`);
+      console.log(`Execution Time Breakdown:`);
+      console.log(`  - Master Disk Reads (photoSource): ${res.timings.photoSourceReadSec} s`);
+      console.log(`  - Photo Preparation (Sharp)      : ${res.timings.photoPrepSec} s`);
+      console.log(`  - Card Render & Outline Gen      : ${res.timings.cardRenderSec} s`);
+      console.log(`  - D-09 Batch Gate Checking       : ${res.timings.gateCheckSec} s`);
+      console.log(`  - Sheet Imposition Layout        : ${res.timings.layoutSec} s`);
+      console.log(`  - SVG Assembly & Deduplication   : ${res.timings.svgAssemblySec} s`);
+      console.log(`  - Chromium PDF Print             : ${res.timings.chromiumPrintSec} s`);
+      console.log(`  - Unattributed / Overhead        : ${res.timings.unattributedSec} s`);
+      console.log(`  - Total Elapsed (Wall Clock)     : ${res.timings.totalSec} s`);
     }
     console.log(`Memory Footprint:`);
     console.log(`  - Peak Node RSS        : ${(peakNode / (1024 * 1024)).toFixed(2)} MB`);

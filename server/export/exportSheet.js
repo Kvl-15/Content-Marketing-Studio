@@ -263,7 +263,10 @@ export async function exportSheet(input, settingsInput = {}, options = {}) {
 
   // 6. PHASE 1: Render each card and run D-09 GATE on EVERY card BEFORE touching Chromium
   const tStart = performance.now();
+  let photoSourceReadMs = 0;
   let photoPrepMs = 0;
+  let cardRenderMs = 0;
+  let gateCheckMs = 0;
   let totalPreparedPhotoBytes = 0;
   let preparedPhotoCount = 0;
   /** @type {Array<{ person: Person, rendered: any, draft: any }>} */
@@ -323,7 +326,9 @@ export async function exportSheet(input, settingsInput = {}, options = {}) {
 
     if (photoSourceFn) {
       try {
+        const tSrc0 = performance.now();
         const srcResult = await photoSourceFn(pid);
+        photoSourceReadMs += performance.now() - tSrc0;
         if (srcResult === null) {
           // null means "no photo": initials avatar + missing-photo warning
           preparedPhotoUri = null;
@@ -409,7 +414,9 @@ export async function exportSheet(input, settingsInput = {}, options = {}) {
       bleedMm: settings.bleedMm,
     };
 
+    const tR0 = performance.now();
     let rendered = renderCard(renderInput);
+    cardRenderMs += performance.now() - tR0;
 
     // Condition 2: If real rendered box differs from assumed box by > 0.01 mm, re-prepare and re-render
     const realBox = extractPhotoBoxFromScene(rendered.scene);
@@ -428,7 +435,9 @@ export async function exportSheet(input, settingsInput = {}, options = {}) {
           });
           effectivePerson.photo = rePrep.dataUri;
           renderInput.person = effectivePerson;
+          const tR1 = performance.now();
           rendered = renderCard(renderInput);
+          cardRenderMs += performance.now() - tR1;
         } catch (err) {
           const prepErr = /** @type {PhotoPrepError} */ (err);
           failingPersonIds.push(pid);
@@ -454,9 +463,11 @@ export async function exportSheet(input, settingsInput = {}, options = {}) {
     const validIssues = rendered.issues.filter(
       (i) => !(i.code === "LOGO_DISTORTED" && i.nodeId === "photo")
     );
+    const tG0 = performance.now();
     const gateResult = checkExportGate(validIssues, {
       acknowledgedWarnings: options.acknowledgedWarnings ?? false,
     });
+    gateCheckMs += performance.now() - tG0;
 
     if (!gateResult.ok) {
       failingPersonIds.push(pid);
@@ -483,7 +494,7 @@ export async function exportSheet(input, settingsInput = {}, options = {}) {
   }
 
   // 7. PHASE 2: Imposition using core/sheet.js
-  const tSvg0 = performance.now();
+  const tLayout0 = performance.now();
   // Pass list of cards with id and roleId for role grouping
   const layoutCardItems = peopleList.map((p, idx) => ({
     id: p.id || `card-${idx}`,
@@ -491,6 +502,7 @@ export async function exportSheet(input, settingsInput = {}, options = {}) {
   }));
 
   const layoutResult = sheetLayout(settings, layoutCardItems);
+  const layoutMs = performance.now() - tLayout0;
 
   // Check sheet-level layout warnings against D-09 gate (e.g. MARKS_NEAR_PAGE_EDGE)
   if (Array.isArray(layoutResult.warnings) && layoutResult.warnings.length > 0) {
@@ -513,6 +525,9 @@ export async function exportSheet(input, settingsInput = {}, options = {}) {
     }
     allWarnings.push(...layoutGate.warnings);
   }
+
+  // 8. PHASE 3: Assemble Sheet SVGs & HTML
+  const tSvg0 = performance.now();
 
   // Map card renders by ID for quick lookup during cell placement
   /** @type {Map<string, { person: Person, rendered: any, draft: any }>} */
@@ -683,6 +698,15 @@ ${htmlPages}
   });
   const chromiumPrintMs = performance.now() - tPrint0;
   const totalMs = performance.now() - tStart;
+  const stageSumMs =
+    photoSourceReadMs +
+    photoPrepMs +
+    cardRenderMs +
+    gateCheckMs +
+    layoutMs +
+    svgAssemblyMs +
+    chromiumPrintMs;
+  const unattributedMs = Math.max(0, totalMs - stageSumMs);
 
   if (options.outputPath) {
     await fs.promises.mkdir(path.dirname(options.outputPath), { recursive: true });
@@ -699,9 +723,14 @@ ${htmlPages}
     issues: [],
     warnings: allWarnings,
     timings: {
+      photoSourceReadSec: Number((photoSourceReadMs / 1000).toFixed(3)),
       photoPrepSec: Number((photoPrepMs / 1000).toFixed(3)),
+      cardRenderSec: Number((cardRenderMs / 1000).toFixed(3)),
+      gateCheckSec: Number((gateCheckMs / 1000).toFixed(3)),
+      layoutSec: Number((layoutMs / 1000).toFixed(3)),
       svgAssemblySec: Number((svgAssemblyMs / 1000).toFixed(3)),
       chromiumPrintSec: Number((chromiumPrintMs / 1000).toFixed(3)),
+      unattributedSec: Number((unattributedMs / 1000).toFixed(3)),
       totalSec: Number((totalMs / 1000).toFixed(3)),
     },
     photoStats: {
