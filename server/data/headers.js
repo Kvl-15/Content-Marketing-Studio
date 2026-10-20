@@ -118,16 +118,60 @@ export function proposeHeaderMapping(headers, options = {}) {
 export function mappingProposal(headers, options = {}) {
   const columns = proposeHeaderMapping(headers, options);
   const byTarget = new Map();
-  for (const column of columns) for (const candidate of column.candidates) {
-    const list = byTarget.get(candidate.target) ?? [];
-    list.push({ columnIndex: column.columnIndex, source: column.source, confidence: candidate.confidence });
-    byTarget.set(candidate.target, list);
+  for (const column of columns) {
+    for (const candidate of column.candidates) {
+      const list = byTarget.get(candidate.target) ?? [];
+      list.push({
+        columnIndex: column.columnIndex,
+        source: column.source,
+        confidence: candidate.confidence,
+        isTop: column.target === candidate.target,
+      });
+      byTarget.set(candidate.target, list);
+    }
   }
+
+  const mapping = {};
+  const competing = {};
+
+  for (const [target, candidates] of byTarget.entries()) {
+    if (candidates.length === 1) {
+      mapping[target] = candidates[0].columnIndex;
+      continue;
+    }
+
+    // Multiple candidates for this target across columns.
+    // Identify columns that selected this target as their top (primary) choice.
+    const primaries = candidates.filter((c) => c.isTop);
+
+    if (primaries.length === 1) {
+      const primary = primaries[0];
+      const secondaries = candidates.filter((c) => !c.isTop);
+      // If the primary match is unambiguous (every secondary candidate from another column
+      // has strictly lower confidence), map to the primary column.
+      // A lower-confidence secondary candidate must not invalidate an unambiguous, higher-confidence match.
+      const isUnambiguous = secondaries.every((s) => s.confidence < primary.confidence);
+      if (isUnambiguous) {
+        mapping[target] = primary.columnIndex;
+        continue;
+      }
+    }
+
+    // Multiple primaries or competing candidates with equal/higher confidence:
+    // Retain in competing to represent genuine ambiguity.
+    const competingList = primaries.length > 1 ? primaries : candidates;
+    competing[target] = competingList.map(({ columnIndex, source, confidence }) => ({
+      columnIndex,
+      source,
+      confidence,
+    }));
+  }
+
   const requiredFields = options.requiredFields ?? [...REQUIRED_FIELDS];
   return {
     columns,
-    mapping: Object.fromEntries([...byTarget.entries()].filter(([, values]) => values.length === 1).map(([target, values]) => [target, values[0].columnIndex])),
-    competing: Object.fromEntries([...byTarget.entries()].filter(([, values]) => values.length > 1)),
+    mapping,
+    competing,
     unmappedHeaders: columns.filter((column) => column.candidates.length === 0).map((column) => column.source),
     missingRequiredFields: requiredFields.filter((field) => !byTarget.has(field)),
   };

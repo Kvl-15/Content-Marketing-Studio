@@ -71,6 +71,19 @@ describe("headers", () => {
     expect(proposeHeaderMapping(["Email ID", "Email"]).map((item) => item.candidates[0].target)).toEqual(["email", "email"]);
     expect(mappingProposal(["Email ID", "Email"]).competing.email).toHaveLength(2);
   });
+
+  it("resolves name, role, participant_id correctly and preserves genuine ambiguity", () => {
+    const proposal = mappingProposal(["name", "role", "participant_id"]);
+    expect(proposal.mapping).toEqual({ name: 0, roleId: 1, id: 2 });
+    expect(proposal.competing).toEqual({});
+
+    const ambiguous = mappingProposal(["Full Name", "Display Name", "Role", "ID"]);
+    expect(ambiguous.competing.name).toBeDefined();
+    expect(ambiguous.competing.name.length).toBeGreaterThanOrEqual(2);
+    expect(ambiguous.mapping.name).toBeUndefined();
+    expect(ambiguous.mapping.roleId).toBe(2);
+    expect(ambiguous.mapping.id).toBe(3);
+  });
 });
 
 describe("cleaning, roles, and IDs", () => {
@@ -170,6 +183,18 @@ describe("dataset integration", () => {
     expect(result.report.format).toBe("xlsx");
     expect(result.report.firstSheet).toBe("Roster");
     expect(result.people[0].id).toBe("HX26-M-001");
+  });
+
+  it("builds a dataset from CSV with name, role, participant_id headers and auto-proposed mapping", async () => {
+    const csv = "name,role,participant_id\nAlice Smith,participant,P-101\nBob Jones,mentor,P-102\n";
+    const proposal = mappingProposal(["name", "role", "participant_id"]);
+    const result = await buildDataset(csv, { eventSpec, mapping: proposal.mapping, eventCode: "HX26" });
+    expect(result.people).toHaveLength(2);
+    expect(result.people[0].name).toBe("Alice Smith");
+    expect(result.people[0].id).toBe("P-101");
+    expect(result.people[0].roleId).toBe("participant");
+    expect(result.report.totals.errors).toBe(0);
+    expect(result.report.totals.rows).toBe(2);
   });
 
   it("builds a 235-row dataset end to end with a photo ZIP", async () => {

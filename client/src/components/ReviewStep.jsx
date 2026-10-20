@@ -1,21 +1,39 @@
-import React, { useState } from "react";
-import { lockSpec } from "../api.js";
+import React, { useState, useEffect } from "react";
+import { lockSpec, createProject } from "../api.js";
 
 /**
- * Step 3: EventSpec Review & Immutability Lock (KB 7.6, D-13).
+ * Step 3: EventSpec Review & Immutability Lock (KB 7.6, D-13),
+ * with dedicated button-driven transition to Project Creation.
  *
  * @param {{
  *   spec: any;
  *   onSpecLocked: (lockedSpec: any) => void;
+ *   onProjectCreated?: (project: any) => void;
  *   onBack: () => void;
  *   onReset: () => void;
  *   onError: (err: any) => void;
  * }} props
  */
-export function ReviewStep({ spec, onSpecLocked, onBack, onReset, onError }) {
+export function ReviewStep({ spec, onSpecLocked, onProjectCreated, onBack, onReset, onError }) {
   const [locking, setLocking] = useState(false);
   const [lockedData, setLockedData] = useState(null);
   const [copied, setCopied] = useState(false);
+
+  // Dedicated project creation view mode
+  const [showCreationView, setShowCreationView] = useState(false);
+
+  // Project creation form state
+  const [projectName, setProjectName] = useState(spec.event?.name?.value || "");
+  const [eventCode, setEventCode] = useState("");
+  const [creatingProject, setCreatingProject] = useState(false);
+  const [creationError, setCreationError] = useState(null);
+
+  // Scroll to top when switching between review and dedicated project creation view
+  useEffect(() => {
+    if (showCreationView) {
+      window.scrollTo({ top: 0, behavior: "instant" });
+    }
+  }, [showCreationView]);
 
   const handleLock = async () => {
     setLocking(true);
@@ -28,6 +46,44 @@ export function ReviewStep({ spec, onSpecLocked, onBack, onReset, onError }) {
       onError(err);
     } finally {
       setLocking(false);
+    }
+  };
+
+  const handleCreateProject = async (e) => {
+    if (e) e.preventDefault();
+    const trimmedName = (projectName || "").trim();
+    if (!trimmedName) {
+      setCreationError("Project name is required.");
+      return;
+    }
+
+    const trimmedCode = (eventCode || "").trim().toUpperCase();
+    if (trimmedCode && !/^[A-Z0-9]{2,8}$/.test(trimmedCode)) {
+      setCreationError(
+        "Event code must be 2 to 8 uppercase alphanumeric characters (e.g. NSH26), or left empty to auto-derive."
+      );
+      return;
+    }
+
+    setCreatingProject(true);
+    setCreationError(null);
+    onError(null);
+
+    try {
+      const created = await createProject({
+        name: trimmedName,
+        eventSpec: lockedData || spec,
+        eventCode: trimmedCode || undefined,
+      });
+
+      if (onProjectCreated) {
+        onProjectCreated(created);
+      }
+    } catch (err) {
+      setCreationError(err.message || "Failed to create project");
+      onError(err);
+    } finally {
+      setCreatingProject(false);
     }
   };
 
@@ -65,6 +121,130 @@ export function ReviewStep({ spec, onSpecLocked, onBack, onReset, onError }) {
 
   const roles = Array.isArray(spec.roles) ? spec.roles : [];
 
+  // =========================================================================
+  // View A: Dedicated Project Creation Screen (after clicking Continue)
+  // =========================================================================
+  if (showCreationView && isLocked) {
+    return (
+      <div className="card-panel project-create-dedicated-panel">
+        <div className="panel-header">
+          <div>
+            <h2 className="section-title">Create Studio Project</h2>
+            <p className="section-desc">
+              Your EventSpec is validated and permanently locked. Assign a project name and optional
+              event code to proceed to participant data upload and photo matching.
+            </p>
+          </div>
+          <span className="badge badge-locked">&#128274; Specification Locked</span>
+        </div>
+
+        {/* Locked Context Summary Card */}
+        <div className="locked-summary-banner">
+          <div className="locked-summary-left">
+            <span className="locked-summary-icon">&#10003;</span>
+            <div>
+              <div className="locked-summary-title">
+                <strong>Locked Specification:</strong> {eventName}
+              </div>
+              <div className="locked-summary-meta">
+                {datesDisplay !== "—" ? `${datesDisplay} • ` : ""}
+                {roles.length} Attendee Roles &bull; CR80 Portrait (54 &times; 85.6 mm)
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            onClick={() => {
+              setShowCreationView(false);
+              window.scrollTo({ top: 0, behavior: "instant" });
+            }}
+          >
+            &larr; View Locked Specification
+          </button>
+        </div>
+
+        {/* Project Creation Form */}
+        <form onSubmit={handleCreateProject} className="project-creation-form dedicated">
+          <div className="form-group">
+            <label htmlFor="create-project-name" className="form-label">
+              Project Name <span className="text-danger">*</span>
+            </label>
+            <input
+              id="create-project-name"
+              type="text"
+              className="input-field"
+              value={projectName}
+              onChange={(e) => setProjectName(e.target.value)}
+              placeholder="e.g. NIT Surat Hackathon 2026"
+              required
+              maxLength={100}
+              disabled={creatingProject}
+            />
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="create-event-code" className="form-label">
+              Event Code <span className="text-muted text-sm">(Optional)</span>
+            </label>
+            <input
+              id="create-event-code"
+              type="text"
+              className="input-field"
+              value={eventCode}
+              onChange={(e) =>
+                setEventCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8))
+              }
+              placeholder="e.g. NSH26 (leave blank to auto-derive)"
+              maxLength={8}
+              disabled={creatingProject}
+            />
+            <span className="field-hint">
+              Short 2 to 8 uppercase alphanumeric characters. If omitted, the server derives one
+              automatically from the event name.
+            </span>
+          </div>
+
+          {creationError && (
+            <div className="form-error-inline" role="alert">
+              <span className="error-dot">●</span> {creationError}
+            </div>
+          )}
+
+          <div className="creation-actions dedicated-actions">
+            <button
+              type="submit"
+              className="btn btn-primary btn-lg"
+              disabled={creatingProject}
+            >
+              {creatingProject ? (
+                <>
+                  <span className="spinner-inline" /> Creating Project...
+                </>
+              ) : (
+                "Create Project & Proceed to Uploads →"
+              )}
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => {
+                setShowCreationView(false);
+                window.scrollTo({ top: 0, behavior: "instant" });
+              }}
+              disabled={creatingProject}
+            >
+              &larr; Return to Locked Specification
+            </button>
+          </div>
+        </form>
+      </div>
+    );
+  }
+
+  // =========================================================================
+  // View B: Specification Review & Immutability Lock Screen
+  // =========================================================================
   return (
     <div className="card-panel">
       <div className="panel-header">
@@ -246,12 +426,21 @@ export function ReviewStep({ spec, onSpecLocked, onBack, onReset, onError }) {
           </>
         ) : (
           <>
-            <span className="locked-success-label">
-              &#10003; Specification is permanently locked.
-            </span>
+            <div className="locked-action-group">
+              <span className="locked-success-label">
+                &#10003; Specification is permanently locked.
+              </span>
+              <button
+                type="button"
+                className="btn btn-primary btn-lg"
+                onClick={() => setShowCreationView(true)}
+              >
+                Continue to Create Project &rarr;
+              </button>
+            </div>
             <button
               type="button"
-              className="btn btn-primary"
+              className="btn btn-ghost"
               onClick={onReset}
             >
               Create Another Event

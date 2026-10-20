@@ -11,6 +11,135 @@
 
 ## Done
 
+- Photo Upload Gating & Valid Attendee Calculation Fix (20 October 2026)
+  - Files:
+    - `client/src/components/ProjectWorkflow.jsx`
+    - `client/src/components/DataUploadStep.jsx`
+    - `client/src/components/A2ReportView.jsx`
+    - `client/src/api.test.js`
+    - `server/server.smoke.test.js`
+    - `docs/PROGRESS.md`
+  - Problem Solved:
+    - In `ProjectWorkflow.jsx`, `DataUploadStep.jsx`, and `A2ReportView.jsx`, valid attendees were mistakenly determined by checking `report.totals.ok` rather than calculating non-error rows (`totals.rows - totals.errors`).
+    - When rows have non-fatal warnings (such as `MISSING_OPTIONAL_FIELD` for `org` or `NO_PHOTO`), the backend assigns `row.status = "WARNING"`, which produces `totals.ok = 0` and `totals.warnings = 5`, even though all 5 attendees were valid and saved in the database (`peopleCount = 5`).
+    - This caused `ProjectWorkflow` to never update `peopleCount` upon data upload and kept `hasDataset = false`, locking the photo upload section and falsely displaying *"0 valid attendee records ready for badges"*.
+  - Fix Delivered:
+    1. Robust Valid Attendee Calculation:
+       - Defined `getValidAttendeeCount(report)` as `Math.max(0, rows - errors)` so that non-fatal warnings do not incorrectly disqualify valid attendee rows from badge generation or photo matching.
+       - Defined `computeHasDataset(project, report, reportError)` ensuring `hasDataset` resolves to `true` when valid attendees exist and no report error is active.
+    2. Dynamic Gating & Project Synchronization:
+       - In `ProjectWorkflow.jsx`, immediately propagates `peopleCount` and `datasetReport` to parent state via `onProjectUpdated` upon successful upload (even when rows contain warnings), unlocking photo upload instantly.
+       - Added synchronization effect in `ProjectWorkflow.jsx` (`useEffect` on `[project.id, project.datasetReport]`) so reopening saved projects with existing datasets properly restores the unlocked photo upload state from the API response.
+       - Corrected UI labels in `DataUploadStep` and KPI cards in `A2ReportView` to accurately report the number of valid attendees ready for badges.
+    3. Regression Tests:
+       - Added unit tests in `client/src/api.test.js` covering:
+         - Successful import with warnings unlocking photo upload and setting valid attendee count.
+         - Failed import with 0 valid attendees (HTTP 422) keeping photo upload gated.
+         - Reopening saved project restoring unlocked photo upload state immediately.
+         - Empty project without dataset keeping photo upload gated.
+       - Added assertion in `server/server.smoke.test.js` verifying that `POST /projects/:id/photos` is rejected with `NO_DATASET` before tabular data, and that saved `datasetReport` and `peopleCount: 5` are delivered upon reopening via `GET /projects/:id`.
+  - Verification:
+    - Client API and workflow tests: 16/16 passed in `client/src/api.test.js`.
+    - Server smoke tests: 13/13 passed in `server/server.smoke.test.js`.
+    - Data ingestion tests: 16/16 passed in `server/data/data.test.js`.
+    - Client production build: `npm run build --workspace=@acm-studio/client` built in 1.17s with 0 errors.
+    - ESLint: 0 errors on modified files.
+
+- CSV Header Auto-Mapping & Diagnostic Report Fix (20 October 2026)
+  - Files:
+    - `server/data/headers.js`
+    - `client/src/components/A2ReportView.jsx`
+    - `server/data/data.test.js`
+    - `server/server.smoke.test.js`
+    - `docs/PROGRESS.md`
+  - Problem Solved:
+    - In `server/data/headers.js`, `mappingProposal` grouped all candidates across columns by target, causing lower-confidence secondary candidate matches (e.g. `participant_id` matching `name` alias at 0.719 confidence via substring) to incorrectly treat target `name` as competing even though column 0 had an unambiguous 100% confidence match.
+    - When `proposal.mapping` dropped `name`, ingestion extracted blank attendee names, causing all rows to fail with `MISSING_NAME` (0 valid attendees, HTTP 422).
+    - In `client/src/components/A2ReportView.jsx`, issues without a value rendered dangling text like `(org: )`.
+  - Fix Delivered:
+    1. Automatic Header Mapping:
+       - Refined `mappingProposal` in `server/data/headers.js` to distinguish primary candidates (`isTop`) from secondary candidates.
+       - A lower-confidence secondary candidate from another column does not invalidate an unambiguous primary match with higher confidence.
+       - Confirmed `name`, `role`, `participant_id` maps cleanly to `{ name: 0, roleId: 1, id: 2 }` with empty `competing`.
+       - Genuine ambiguity (e.g. `["Full Name", "Display Name"]`) is preserved and correctly reported in `competing`.
+    2. Diagnostic Report View:
+       - Enhanced `A2ReportView.jsx` to render clear labels like `Missing optional field: org` for `MISSING_OPTIONAL_FIELD` notices.
+       - Suppressed dangling field colons `(org: )` when no issue value is present.
+    3. Regression Tests:
+       - Added unit tests in `server/data/data.test.js` covering `['name', 'role', 'participant_id']` mapping proposal, preservation of genuine ambiguity in competing fields, and end-to-end dataset creation with auto-proposed mapping.
+       - Added an integration smoke test in `server/server.smoke.test.js` verifying `POST /projects/:id/data` returns HTTP 200 with 5 valid attendees.
+  - Verification:
+    - Vitest unit tests: 16/16 passed in `server/data/data.test.js`.
+    - Server smoke tests: 13/13 passed in `server/server.smoke.test.js`.
+    - Client API tests: 12/12 passed in `client/src/api.test.js`.
+    - Full project test suite: 25 test files, 426 tests passed (0 failures).
+    - Client build: `npm run build --workspace=@acm-studio/client` built in 1.47s with 0 errors.
+    - ESLint: 0 errors on modified files.
+
+- Slice 2 Navigation & Post-Lock UX Fix (20 October 2026)
+  - Files:
+    - `client/src/components/ReviewStep.jsx`
+    - `client/src/components/ProjectWorkflow.jsx`
+    - `client/src/components/DataUploadStep.jsx`
+    - `client/src/App.jsx`
+    - `client/src/style.css`
+    - `docs/PROGRESS.md`
+  - Improvements Delivered:
+    1. Post-Lock UX & Explicit Transition:
+       - Locking the EventSpec reveals a green lock confirmation banner and a prominent primary button directly in the bottom action bar: "Continue to Create Project →".
+       - Clicking "Continue to Create Project →" cleanly transitions to a dedicated Project Creation view, removing confusing off-screen inline insertions.
+       - The dedicated Project Creation view features a summary callout of the locked event, an easy return route ("← Return to Locked Specification"), project name and optional event code fields, and duplicate submission prevention.
+    2. React Effect Scroll Resets:
+       - Configured an idiomatic React `useEffect` in `App.jsx` watching `[view, activeProject?.id]` and in `ProjectWorkflow.jsx` to reset scroll to top (`window.scrollTo({ top: 0, behavior: "instant" })`) upon view transitions, newly created projects, and projects reopened from the Dashboard.
+    3. Auto-Scroll & 422 Diagnostic Handling:
+       - After successful data upload, smoothly auto-scrolls the view directly to the A2 Report.
+       - When data upload fails with HTTP 422 (e.g. zero valid participants), surfaces the server's diagnostic report and row issues alongside an error banner, never discarding validation errors.
+       - Added a "Continue to Step 2: Photo Upload ↓" action at the bottom of the A2 Report for smooth sequential progression.
+    4. Workflow Phase Stepper:
+       - Added visual status pills at the top of the workflow indicating progress for Step 1 (Participant Data) and Step 2 (Attendee Photos), with explicit gating until participant data exists.
+  - Verification:
+    - 12 unit tests passing in `client/src/api.test.js`.
+    - Vite production build passing in 2.15s (`npm run build --workspace=@acm-studio/client`).
+    - ESLint passing with 0 errors and 0 warnings (`npx eslint client/src/`).
+
+- Frontend Slice 2: Project Dashboard, Creation, and Data/Photo Upload (20 October 2026)
+  - Files:
+    - `client/src/api.js`, `client/src/api.test.js`
+    - `client/src/App.jsx`
+    - `client/src/components/ProjectDashboard.jsx`
+    - `client/src/components/ReviewStep.jsx`
+    - `client/src/components/ProjectWorkflow.jsx`
+    - `client/src/components/DataUploadStep.jsx`
+    - `client/src/components/A2ReportView.jsx`
+    - `client/src/components/PhotoUploadStep.jsx`
+    - `client/src/style.css`
+    - `docs/PROGRESS.md`
+  - Features Delivered:
+    1. Project Dashboard:
+       - Connects to `GET /projects` listing saved projects with ID, name, event code, timestamps, and empty/loading/error states.
+       - Opens existing projects directly by loading full project details via `GET /projects/:id`.
+    2. Project Creation from Locked EventSpec:
+       - Seamlessly bridges Step 3 (Review & Lock) to project creation without dead ends.
+       - Invokes `POST /projects` with name, eventSpec, and optional validated `eventCode` (2-8 uppercase alphanumeric).
+       - Duplicate submission protection with busy states.
+    3. Tabular Data Upload:
+       - Accepts raw file bytes (CSV, XLSX, JSON) via `POST /projects/:id/data`.
+       - Supports drag-and-drop, format detection, and clear error handling (400, 413, 422).
+    4. A2 Data Report Screen:
+       - Displays actual server validation report: KPI summary tiles (total, valid, warnings, errors, formula-like cells), file/ingestion metadata, proposed column mapping with confidence bars, and row diagnostics with severity filtering.
+       - On HTTP 422 (zero valid participants), surfaces the report diagnostic rows so users see exact issues.
+    5. Photo ZIP Archive Upload & Matching:
+       - Accepts raw ZIP bytes via `POST /projects/:id/photos` with 300 MB limit and dataset gating.
+       - Displays photo matching results: matched participants table, unmatched files list, unmatched rows list, and warnings.
+    6. Preserved Intake Flow & Polished Cohesive Dev-Tool UI:
+       - Fully preserved Brief -> Questions -> Review & Lock wizard.
+       - Clean navigation tabs (Dashboard, Intake Spec, Active Project), semantic styling, accessible focus states, and zero third-party UI libraries.
+  - Verification:
+    - 12 unit tests passing in `client/src/api.test.js`.
+    - Vite production build passing cleanly in 1.50s (`npm run build --workspace=@acm-studio/client`).
+    - ESLint passing with 0 errors and 0 warnings (`npx eslint client/src/`).
+    - 424 backend and core tests passing in Vitest.
+
 - Task G: Gemini Gateway Speed, Bounded Deadlines and Model Fix (20 October 2026)
   - Files:
     - `server/ai/gateway.js`, `server/ai/gateway.test.js`
@@ -388,11 +517,11 @@
 
 ## In progress
 
-- None. Task S (Express Server + MongoDB / In-Memory Storage & REST API) complete.
+- None. Frontend Slice 2 (Project Dashboard, Creation, and Data/Photo Upload) complete.
 
 ## Next
 
-- Stage B / Client GUI integration (connecting React frontend to Task S Express REST API).
+- Frontend Slice 3: Draft Composition, SVG Card Preview with Shared Renderer, Version Saving, and Print-Ready Exports.
 
 ## Decisions and open questions
 

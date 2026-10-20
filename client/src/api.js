@@ -25,6 +25,82 @@ export class ApiError extends Error {
 }
 
 /**
+ * Helper to execute GET requests with clean error extraction.
+ *
+ * @param {string} path
+ * @returns {Promise<any>}
+ */
+async function getJson(path) {
+  const url = `${BASE_URL}${path}`;
+
+  let response;
+  try {
+    response = await fetch(url, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+    });
+  } catch {
+    throw new ApiError(
+      "NETWORK_ERROR",
+      `Unable to connect to server at ${BASE_URL}. Ensure the backend is running.`
+    );
+  }
+
+  let json;
+  try {
+    json = await response.json();
+  } catch {
+    throw new ApiError(
+      "INVALID_RESPONSE",
+      `Received non-JSON response from server (HTTP ${response.status}).`
+    );
+  }
+
+  return { ok: response.ok, status: response.status, data: json };
+}
+
+/**
+ * Helper to execute raw binary POST requests with clean error extraction.
+ *
+ * @param {string} path
+ * @param {Blob | ArrayBuffer | Uint8Array} body
+ * @param {string} [contentType]
+ * @returns {Promise<any>}
+ */
+async function postRaw(path, body, contentType = "application/octet-stream") {
+  const url = `${BASE_URL}${path}`;
+
+  let response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": contentType,
+        Accept: "application/json",
+      },
+      body,
+    });
+  } catch {
+    throw new ApiError(
+      "NETWORK_ERROR",
+      `Unable to connect to server at ${BASE_URL}. Ensure the backend is running.`
+    );
+  }
+
+  let json;
+  try {
+    json = await response.json();
+  } catch {
+    throw new ApiError(
+      "INVALID_RESPONSE",
+      `Received non-JSON response from server (HTTP ${response.status}).`
+    );
+  }
+
+  return { ok: response.ok, status: response.status, data: json };
+}
+
+/**
  * Helper to execute JSON requests with clean error extraction.
  *
  * @param {string} path
@@ -177,4 +253,163 @@ export async function lockSpec(spec) {
   }
 
   return { spec: data.spec, locked: Boolean(data.locked) };
+}
+
+/**
+ * Slice 2: Fetch list of saved project summaries (GET /projects).
+ *
+ * @returns {Promise<Array<{
+ *   id: string;
+ *   name: string;
+ *   eventCode: string;
+ *   createdAt: string;
+ *   updatedAt: string;
+ * }>>}
+ */
+export async function listProjects() {
+  const { ok, status, data } = await getJson("/projects");
+
+  if (!ok) {
+    const err = data?.error || {
+      code: "FETCH_FAILED",
+      message: `Failed to fetch projects (HTTP ${status}).`,
+    };
+    throw new ApiError(err.code, err.message, err.issues);
+  }
+
+  return Array.isArray(data) ? data : [];
+}
+
+/**
+ * Slice 2: Fetch full details for a single project (GET /projects/:id).
+ *
+ * @param {string} id
+ * @returns {Promise<any>}
+ */
+export async function getProject(id) {
+  const { ok, status, data } = await getJson(`/projects/${encodeURIComponent(id)}`);
+
+  if (!ok) {
+    const err = data?.error || {
+      code: status === 404 ? "NOT_FOUND" : "FETCH_FAILED",
+      message: `Failed to fetch project ${id} (HTTP ${status}).`,
+    };
+    throw new ApiError(err.code, err.message, err.issues);
+  }
+
+  return data;
+}
+
+/**
+ * Slice 2: Create a project with a locked EventSpec (POST /projects).
+ *
+ * @param {{
+ *   name: string;
+ *   eventSpec: any;
+ *   eventCode?: string;
+ * }} params
+ * @returns {Promise<any>} The created public project
+ */
+export async function createProject({ name, eventSpec, eventCode }) {
+  const payload = {
+    name,
+    eventSpec,
+    ...(eventCode ? { eventCode } : {}),
+  };
+
+  const { ok, status, data } = await postJson("/projects", payload);
+
+  if (!ok) {
+    const err = data?.error || {
+      code: "CREATE_FAILED",
+      message: `Failed to create project (HTTP ${status}).`,
+    };
+    throw new ApiError(err.code, err.message, err.issues);
+  }
+
+  return data;
+}
+
+/**
+ * Slice 2: Upload participant tabular data (POST /projects/:id/data).
+ * Accepts raw file bytes (CSV, XLSX, JSON).
+ *
+ * @param {string} projectId
+ * @param {Blob | ArrayBuffer | Uint8Array} fileData
+ * @param {{
+ *   kind?: "csv" | "xlsx" | "json";
+ *   mapping?: Record<string, any>;
+ *   contentType?: string;
+ * }} [options]
+ * @returns {Promise<{ ok: boolean; report: any }>}
+ */
+export async function uploadProjectData(projectId, fileData, options = {}) {
+  const params = new URLSearchParams();
+  if (options.kind) params.set("kind", options.kind);
+  if (options.mapping) params.set("mapping", JSON.stringify(options.mapping));
+  const qs = params.toString() ? `?${params.toString()}` : "";
+
+  const { ok, status, data } = await postRaw(
+    `/projects/${encodeURIComponent(projectId)}/data${qs}`,
+    fileData,
+    options.contentType || "application/octet-stream"
+  );
+
+  if (ok && data?.report) {
+    return { ok: true, report: data.report };
+  }
+
+  // 422: zero valid participants found, returns full report alongside error
+  if (status === 422 && data?.report) {
+    const err = new ApiError(
+      data.error?.code || "DATA_VALIDATION_ERROR",
+      data.error?.message || "Data validation failed",
+      data.error?.issues
+    );
+    // @ts-ignore attach report for GUI rendering
+    err.report = data.report;
+    throw err;
+  }
+
+  const err = data?.error || {
+    code: status === 413 ? "PAYLOAD_TOO_LARGE" : "DATA_UPLOAD_FAILED",
+    message: `Failed to upload participant data (HTTP ${status}).`,
+  };
+  throw new ApiError(err.code, err.message, err.issues);
+}
+
+/**
+ * Slice 2: Upload photo ZIP archive (POST /projects/:id/photos).
+ * Accepts raw ZIP bytes.
+ *
+ * @param {string} projectId
+ * @param {Blob | ArrayBuffer | Uint8Array} zipData
+ * @returns {Promise<{
+ *   matches: Array<{ rowNumber: number | null; id: string | null; file: string | null; method: string }>;
+ *   unmatchedFiles: string[];
+ *   unmatchedRows: number[];
+ *   warnings: any[];
+ * }>}
+ */
+export async function uploadProjectPhotos(projectId, zipData) {
+  const { ok, status, data } = await postRaw(
+    `/projects/${encodeURIComponent(projectId)}/photos`,
+    zipData,
+    "application/zip"
+  );
+
+  if (ok) {
+    return {
+      matches: Array.isArray(data.matches) ? data.matches : [],
+      unmatchedFiles: Array.isArray(data.unmatchedFiles) ? data.unmatchedFiles : [],
+      unmatchedRows: Array.isArray(data.unmatchedRows) ? data.unmatchedRows : [],
+      warnings: Array.isArray(data.warnings) ? data.warnings : [],
+    };
+  }
+
+  const err = data?.error || {
+    code: status === 413 ? "PAYLOAD_TOO_LARGE" : "PHOTO_UPLOAD_FAILED",
+    message: `Failed to upload photo archive (HTTP ${status}).`,
+  };
+  throw new ApiError(err.code, err.message, err.issues);
 }

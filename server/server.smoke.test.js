@@ -278,6 +278,61 @@ describe("Server HTTP API smoke tests", { timeout: 30000 }, () => {
     expect(errorBody.report.totals.errors).toBe(2);
   });
 
+  it("imports CSV with name, role, participant_id successfully with HTTP 200 instead of 422", async () => {
+    // 1. Create project
+    const createRes = await fetch(`${baseUrl}/projects`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Participant ID CSV Project",
+        eventSpec: sampleEventSpec,
+      }),
+    });
+    const project = await createRes.json();
+
+    // Verify photo upload is initially gated before tabular data
+    const prePhotoRes = await fetch(`${baseUrl}/projects/${project.id}/photos`, {
+      method: "POST",
+      headers: { "Content-Type": "application/zip" },
+      body: Buffer.from([0x50, 0x4b, 0x05, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
+    });
+    expect(prePhotoRes.status).toBe(400);
+    const prePhotoBody = await prePhotoRes.json();
+    expect(prePhotoBody.error.code).toBe("NO_DATASET");
+
+    // 2. Upload CSV with headers: name, role, participant_id
+    const csvContent =
+      "name,role,participant_id\n" +
+      "Alice Smith,participant,P-101\n" +
+      "Bob Jones,participant,P-102\n" +
+      "Carol White,participant,P-103\n" +
+      "David Black,mentor,P-104\n" +
+      "Eve Green,participant,P-105\n";
+
+    const dataRes = await fetch(`${baseUrl}/projects/${project.id}/data`, {
+      method: "POST",
+      headers: { "Content-Type": "text/csv" },
+      body: csvContent,
+    });
+
+    expect(dataRes.status).toBe(200);
+    const body = await dataRes.json();
+    expect(body.report).toBeDefined();
+    expect(body.report.totals.rows).toBe(5);
+    expect(body.report.totals.errors).toBe(0);
+    expect(body.report.totals.warnings).toBe(5);
+    expect(body.report.mapping.mapping).toEqual({ name: 0, roleId: 1, id: 2 });
+    expect(body.report.mapping.competing).toEqual({});
+
+    // Verify project has 5 attendees and saved datasetReport when retrieved via GET /projects/:id
+    const projRes = await fetch(`${baseUrl}/projects/${project.id}`);
+    const projBody = await projRes.json();
+    expect(projBody.peopleCount).toBe(5);
+    expect(projBody.datasetReport).toBeDefined();
+    expect(projBody.datasetReport.totals.rows).toBe(5);
+    expect(projBody.datasetReport.totals.errors).toBe(0);
+  });
+
   it("returns 404 for an unknown project ID", async () => {
     const res = await fetch(`${baseUrl}/projects/proj_non_existent_12345`);
     expect(res.status).toBe(404);
