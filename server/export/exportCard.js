@@ -6,8 +6,11 @@ import { parseExportSettings } from "../../core/exportSettings.js";
 import { renderCard } from "../../core/render.js";
 import { checkExportGate } from "./gate.js";
 import { fileNameFor } from "./fileName.js";
-
 import { renderSvgToPdf } from "./pdf.js";
+import {
+  preparePhotoForCard,
+  extractPhotoBoxFromScene,
+} from "./photoPrep.js";
 
 /**
  * @typedef {import("../../core/exportSettings.js").ExportSettings} ExportSettings
@@ -135,13 +138,131 @@ export async function exportCard(input, settingsInput = {}, options = {}) {
     }
   }
 
-  // 5. Render card scene & SVG via core/render.js
+  // 5. Photo resolution & preparation (photoSource wins over person.photo)
+  const person = input.person ? { ...input.person } : undefined;
+  const personId = person?.id || "unknown";
+  let photoBox = null;
+
+  let masterPhoto = null;
+  const photoSourceFn = typeof input.photoSource === "function" ? input.photoSource : null;
+
+  if (photoSourceFn) {
+    try {
+      const srcResult = await photoSourceFn(personId);
+      if (srcResult === null) {
+        // null means "no photo": fallback to initials avatar and missing-photo warning
+        if (person) person.photo = null;
+        masterPhoto = null;
+      } else if (!Buffer.isBuffer(srcResult)) {
+        return {
+          ok: false,
+          issues: [],
+          errors: [
+            {
+              severity: "error",
+              code: "PhotoPrepError",
+              message: `[Person ${personId}] PhotoPrepError: photoSource returned a non-Buffer value`,
+            },
+          ],
+          warnings: [],
+          reason: `Export refused: [Person ${personId}] PhotoPrepError: photoSource returned a non-Buffer value`,
+        };
+      } else if (srcResult.length === 0) {
+        return {
+          ok: false,
+          issues: [],
+          errors: [
+            {
+              severity: "error",
+              code: "PhotoPrepError",
+              message: `[Person ${personId}] PhotoPrepError: photoSource returned an empty buffer (0 bytes)`,
+            },
+          ],
+          warnings: [],
+          reason: `Export refused: [Person ${personId}] PhotoPrepError: photoSource returned an empty buffer (0 bytes)`,
+        };
+      } else {
+        masterPhoto = srcResult;
+      }
+    } catch (err) {
+      const msg = /** @type {Error} */ (err).message || "photoSource threw an error";
+      return {
+        ok: false,
+        issues: [],
+        errors: [
+          {
+            severity: "error",
+            code: "PhotoPrepError",
+            message: `[Person ${personId}] PhotoPrepError: ${msg}`,
+          },
+        ],
+        warnings: [],
+        reason: `Export refused: [Person ${personId}] PhotoPrepError: ${msg}`,
+      };
+    }
+  } else if (person?.photo) {
+    masterPhoto = person.photo;
+  }
+
+  const isImageToPrepare =
+    masterPhoto &&
+    (typeof masterPhoto !== "string" || masterPhoto.startsWith("data:"));
+
+  if (isImageToPrepare && input.draft && person) {
+    // Dry-run discovery of photo box from draft template
+    const dryCard = renderCard({
+      skeleton: input.draft.skeleton,
+      blocks: input.draft.blocks,
+      theme: input.draft.theme,
+      look: input.draft.look,
+      person: { id: "dry-run", name: "Dry Run", roleId: "participant" },
+      brand: input.brand,
+      fonts: input.fonts,
+      event: input.eventSpec,
+      card: {
+        widthMm: settings.card.widthMm,
+        heightMm: settings.card.heightMm,
+        orientation: settings.orientation,
+      },
+      bleedMm: settings.bleedMm,
+    });
+    photoBox = extractPhotoBoxFromScene(dryCard.scene);
+
+    if (photoBox) {
+      try {
+        const prep = await preparePhotoForCard(masterPhoto, {
+          boxWmm: photoBox.w,
+          boxHmm: photoBox.h,
+          dpi: settings.dpi,
+          personId,
+        });
+        person.photo = prep.dataUri;
+      } catch (err) {
+        const prepErr = /** @type {PhotoPrepError} */ (err);
+        return {
+          ok: false,
+          issues: [],
+          errors: [
+            {
+              severity: "error",
+              code: prepErr.code || "INVALID_PHOTO_DATA",
+              message: prepErr.message,
+            },
+          ],
+          warnings: [],
+          reason: `Export refused: ${prepErr.message}`,
+        };
+      }
+    }
+  }
+
+  // 6. Render card scene & SVG via core/render.js
   const renderInput = {
     skeleton: input.draft?.skeleton,
     blocks: input.draft?.blocks,
     theme: input.draft?.theme,
     look: input.draft?.look,
-    person: input.person,
+    person,
     photoSource: input.photoSource,
     brand: input.brand,
     fonts: input.fonts,
@@ -154,10 +275,53 @@ export async function exportCard(input, settingsInput = {}, options = {}) {
     bleedMm: settings.bleedMm,
   };
 
-  const rendered = renderCard(renderInput);
+  let rendered = renderCard(renderInput);
+
+  // Condition 2: If the actual rendered photo box differs from assumed box by > 0.01 mm, re-prepare and re-render
+  const realPhotoBox = extractPhotoBoxFromScene(rendered.scene);
+  if (realPhotoBox && photoBox && person?.photo && (masterPhoto || input.person?.photo)) {
+    if (
+      Math.abs(photoBox.w - realPhotoBox.w) > 0.01 ||
+      Math.abs(photoBox.h - realPhotoBox.h) > 0.01
+    ) {
+      try {
+        const rePrep = await preparePhotoForCard(masterPhoto || input.person?.photo, {
+          boxWmm: realPhotoBox.w,
+          boxHmm: realPhotoBox.h,
+          dpi: settings.dpi,
+          personId,
+        });
+        person.photo = rePrep.dataUri;
+        renderInput.person = person;
+        rendered = renderCard(renderInput);
+      } catch (err) {
+        const prepErr = /** @type {PhotoPrepError} */ (err);
+        return {
+          ok: false,
+          issues: [],
+          errors: [
+            {
+              severity: "error",
+              code: prepErr.code || "INVALID_PHOTO_DATA",
+              message: prepErr.message,
+            },
+          ],
+          warnings: [],
+          reason: `Export refused: ${prepErr.message}`,
+        };
+      }
+    }
+  }
+  // Explicitly release large master photo buffer before memory-heavy PDF/PNG rendering
+  /* eslint-disable-next-line no-useless-assignment */
+  masterPhoto = null;
 
   // 4. Enforce D-09 Gate: errors refuse export; warnings refuse unless acknowledged
-  const gateResult = checkExportGate(rendered.issues, {
+  // Filter false-positive LOGO_DISTORTED on photo nodes (caused by core/render.js hardcoding srcW: 500, srcH: 500)
+  const validIssues = rendered.issues.filter(
+    (i) => !(i.code === "LOGO_DISTORTED" && i.nodeId === "photo")
+  );
+  const gateResult = checkExportGate(validIssues, {
     acknowledgedWarnings: options.acknowledgedWarnings ?? false,
   });
 

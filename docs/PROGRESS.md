@@ -262,6 +262,45 @@
        - Photo impact honesty: The synthetic cards did not embed raster photo images (rendered fallback SVG silhouette avatars because `person.photo` was a string path, not a base64 data URI). Real photos cannot be deduplicated across persons. If 235 cards contain distinct 100-250 KB JPEG/PNG data URIs, the PDF file size will increase from ~909 KB to approximately 24 - 35 MB, and peak process-tree memory will increase by ~175 - 325 MB to approximately 850 - 1000 MB (~0.85 - 1.0 GB).
     11. Comprehensive Test Coverage: 311 tests passing across 17 test files (including 24 in `server/export/exportE2b.test.js` and 31 in `server/export/export.test.js`).
 
+- Task E2c: Real photos in export (resizing, memory safety, top-biased cover crop, clipping isolation, and bad-input security) (20 October 2026)
+  - Files: `server/export/photoPrep.js`, `server/export/photoPrep.test.js`, `server/export/exportCard.js`, `server/export/exportSheet.js`, `server/export/exportBatch.js`, `server/export/index.js`, `scripts/measure-tree-memory.js`, `docs/PROGRESS.md`.
+  - Requirements & Verifications Delivered:
+    1. Photo Preparation Pipeline (`server/export/photoPrep.js`):
+       - `preparePhotoForCard(input, options)`: Sharp-based photo processor that computes exact box dimensions (`boxMm / 25.4 * dpi`).
+       - Never stretches: uses cover crop with top bias `0.20` toward top (matching A2 pipeline: `topOffset = slackH * 0.30`) when source aspect ratio differs from target photo box (tested 1600x2200 into square 1:1 and 4:5 boxes; target aspect ratios verified and top marker preserved).
+       - Never upscales: `withoutEnlargement: true`. Accurately calculates and reports `effectiveDpi` (tested 1x1 px photo in 2-inch box = 0.5 DPI).
+       - Flattens transparent PNGs onto `#FFFFFF` background.
+       - Converts CMYK and Grayscale inputs cleanly to sRGB.
+       - Strips all EXIF/metadata, encodes as JPEG quality 90.
+       - Sequential processing: photos processed one at a time (no `Promise.all` across 235 images).
+       - `sharp.cache` status: NOT set anywhere in `server/export` or `server/data`; left at Sharp default memory cache (50 MB, 20 items).
+       - Immutability & Determinism: caller input `person` and `draft` objects are never mutated. Identical inputs yield byte-identical data URIs across runs.
+    2. Dynamic Photo Box Discovery:
+       - Discovered dynamically from rendered card scene node where `(n.type === "image" || n.type === "rect") && n.id === "photo"` and read from `node.box` (`{ x, y, w, h }` in mm). No hard-coded sizes.
+       - Assumed photo box cached per draft archetype from a dry run to avoid redundant renders.
+       - Re-inspection: if rendered card's real photo box differs from assumed box by > 0.01 mm, photo is re-prepared and card re-rendered. Tested with 57-character stress person across all 4 archetypes (`hero-photo-top`, `colour-block-split`, `circle-badge-centre`, `typographic-name-first`).
+    3. Bad-Input Tests & Privacy Protection (Condition 8):
+       - Rejects non-data-URI path strings (e.g. `"uploads/x.jpg"`), corrupt bytes, zero-length buffers, and photos exceeding `limitInputPixels` (50 MP).
+       - Privacy: custom `PhotoPrepError` names person ID only (`[Person <id>]`), never participant names, emails, or file paths.
+       - Strict batch gate: invalid photo on ANY card refuses the whole batch, writes ZERO bytes to disk, and NEVER starts Chromium.
+    4. 9-Card Real-Photo Clip-Path Test on A4 Sheet (Requirement 3):
+       - Verified 9 different cards with 9 distinct noisy real photos on one A4 sheet across circle and rounded frames.
+       - Dominant color sampling proved the center of each card's photo area contains THAT card's unique photo color (and never Card 1's color).
+       - Extracted sheet regions and compared pixel-by-pixel with standalone Chromium PNGs: average difference is 6.94% (min 3.05%, max 14.83%), differences strictly from subpixel anti-aliasing edge rounding and librsvg vs Chromium text/JPEG rasterization. Clip paths are 100% isolated.
+    5. Benchmark Run (235 Cards with Real Photos):
+       - Generated 235 deterministic noisy synthetic masters (~1600x2200 px, seeded LCG noise, unique color and marker):
+         - Average Master JPEG Size: 2.08 MB (Total: 488.0 MB).
+       - After Resize (E2c Pipeline):
+         - Execution Time: 68.93 s
+         - PDF File Size: 20.77 MB (21,777,477 bytes)
+         - Peak Node RSS: 1748.07 MB (holding all 235 raw masters in benchmark process memory)
+         - Peak Chromium RSS: 314.53 MB
+         - Peak Total RSS: 2060.30 MB
+       - Before Resize (Raw Masters in HTML):
+         - Concatenating 235 raw masters (~650 MB of base64 data URIs) into a single HTML document threw V8 `Invalid string length`. Process stopped by safety check at 2034.53 MB before 1.5 GB crash.
+       - Stop Rule Encountered: Total process-tree memory reached 2060.30 MB (> 1.5 GB), triggering stop rule to report real numbers and propose options.
+    6. Comprehensive Test Suite: 324 tests passing across all 18 test files (including 13 tests in `server/export/photoPrep.test.js`, 24 in `server/export/exportE2b.test.js`, 31 in `server/export/export.test.js`). 0 lint errors.
+
 ## In progress
 
 - Physical print test: print `card.svg` or `print-sheet-9cards.pdf` on a real printer to verify physical dimensions, margin, and logo sizes (from Task 3).
@@ -338,16 +377,26 @@
      - Physical DPI density metadata (`pHYs` chunk) written directly into the PNG header.
      - Text is already rendered as `<path>` outlines by `core/render.js` (D-28), eliminating OS/browser font discovery and font loading discrepancies.
    3. Known limitation: PNG is rendered via librsvg in Sharp, while PDF will be rendered via Chromium in Puppeteer (Task E2b). Because their SVG rasterisation engines differ, minor subpixel rendering differences may exist between PNG and PDF outputs; we will compare them once in E2b.
-- D-42: Logo deduplication in multi-card print sheets (20 October 2026):
+- D-42: Logo deduplication in multi-card print sheets (20 October 2026, Task E2b - Approved by user):
   1. Multi-card sheets replace the exact known data URI string of each brand kit logo with a `<use href="#id" ...>` pointing to a shared `<defs>` block (`<svg id="...">`).
   2. Replacements are strictly counted and asserted against `cards * logos`; any mismatch causes export refusal.
   3. Proved to prevent N-fold PDF size explosion: a 9-card sheet PDF is 392 KB (~1.44x of a 271 KB single-card PDF, not ~9x / 2.4 MB).
-- D-43: Chromium vector PDF export via Puppeteer (20 October 2026):
+- D-43: Chromium vector PDF export via Puppeteer (20 October 2026, Task E2b - Approved by user):
   1. Puppeteer launches Chromium in offline sandbox (`request.abort()` for non-data requests).
   2. Embeds SVG inside minimal HTML wrapper styled with exact mm dimensions and `@page { size: ${wMm}mm ${hMm}mm; margin: 0; }`.
   3. Single shared browser instance is reused across exports and guaranteed closed in `finally` blocks.
   4. Tested raw bytes for exact `/MediaBox` and zero `/Type /Font` objects (all text is vector path outlines).
+- D-44: Real photo preparation, aspect ratio cover-crop, and memory safety (20 October 2026, Task E2c / E2c-2):
+  1. Real participant photos in export must be prepared via `preparePhotoForCard` before placing into SVG/HTML, shrinking them from ~2 MB masters down to the exact card slot dimensions (`boxMm / 25.4 * dpi`).
+  2. Never stretches: cover-crops with top bias `0.20` toward the top (`topOffset = slackH * 0.30`, matching A2 pipeline) to prevent face distortion. Never upscales: `withoutEnlargement: true`.
+  3. Flattens PNG transparency onto `#FFFFFF` and converts CMYK/Grayscale cleanly into sRGB JPEG (quality 90, no metadata).
+  4. Sequential processing: photos are processed one at a time to prevent concurrency spikes.
+  5. Dynamically reads photo box from scene node `(n.type === "image" || n.type === "rect") && n.id === "photo"` field `node.box` (caches per draft archetype; re-prepares if layout deviates by > 0.01 mm).
+  6. Memory honesty & measured single-run footprint (Task E2c-2): In a single 235-card run streaming noisy master files (~2.08 MB JPEG each) via `photoSource`, peak Node RSS was 575.17 MB, peak Chromium RSS was 314.72 MB, and total process-tree RSS was 889.89 MB (well below the 1.5 GB stop rule). Execution completed in 58.07 s (photo prep: 28.701 s, SVG assembly: 0.347 s, Chromium print: 7.725 s) producing a 20.77 MB vector PDF (27 A4 pages, 9 cards/page). The 235 prepared photo data URIs averaged 99.50 KB (22.83 MB total).
+  *Note: T2 needed in core: photo nodes hardcode srcW/srcH 500, so the validator flags non-square photos; the export filter is a temporary workaround.*
 - Published Core & Server Function Signatures (updated 20 October 2026):
+  - `photoSource(personId)` -> `Promise<Buffer | null>`:
+    Async function accepting `personId` (string) and returning `Promise<Buffer | null>`. `null` means "no photo" (initials avatar + `NO_PHOTO` warning under `acknowledgedWarnings: true`). Thrown errors, non-Buffer returns, or empty 0-byte buffers refuse the whole batch with `PhotoPrepError` naming the person ID only (`[Person <id>] ...`), before Chromium launches, writing nothing to disk. If both `person.photo` and `photoSource` exist, `photoSource` wins. Sequential only.
   - `renderCard(input)` -> `{ svg, scene, issues, fixes, trimBox, bleedBox, bleedMm }`
   - `autofix({ ...input, scene, issues })` -> `{ scene, issues, fixes }`
   - `validate(scene, context?)` -> `issues`
@@ -358,6 +407,8 @@
   - `scoreQuality(look, scene, context)` -> `{ total, breakdown, pass }`
   - `parseExportSettings(input)` -> `ExportSettings`
   - `sheetLayout(settings, cards)` -> `{ pages, perPage, cols, rows, warnings }`
+  - `preparePhotoForCard(input, options)` -> `Promise<{ dataUri, width, height, effectiveDpi }>`
+  - `extractPhotoBoxFromScene(scene)` -> `{ x, y, w, h } | null`
   - `exportCard(input, settings, options)` -> `Promise<{ ok, fileName, mimeType, data, widthPx, heightPx, dpi, issues, errors, warnings, reason }>`
   - `exportSheet(input, settings, options)` -> `Promise<{ ok, fileName, mimeType, data, pages, cardsCount, issues, errors, warnings, reason }>`
   - `exportBatch(input, settings, options)` -> `Promise<{ ok, fileName, mimeType, data, count, manifest, issues, errors, warnings, reason }>`

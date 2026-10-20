@@ -17,3 +17,8 @@ export {
   renderHtmlToPdf,
   inspectPdfBytes,
 } from "./pdf.js";
+export {
+  preparePhotoForCard,
+  extractPhotoBoxFromScene,
+  PhotoPrepError,
+} from "./photoPrep.js";

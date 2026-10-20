@@ -8,6 +8,10 @@ import { uniqueFileNames } from "./fileName.js";
 import { exportCard } from "./exportCard.js";
 import { exportSheet } from "./exportSheet.js";
 import { withBrowser } from "./pdf.js";
+import {
+  preparePhotoForCard,
+  extractPhotoBoxFromScene,
+} from "./photoPrep.js";
 
 /**
  * @typedef {import("../../core/exportSettings.js").ExportSettings} ExportSettings
@@ -150,18 +154,125 @@ export async function exportZip(input, settingsInput = {}, options = {}) {
   /** @type {any[]} */
   const allWarnings = [];
 
+  const draftPhotoBoxCache = new Map();
+
   for (let idx = 0; idx < peopleList.length; idx++) {
     const person = peopleList[idx];
+    const pid =
+      person && typeof person.id === "string" && person.id.trim() !== ""
+        ? person.id
+        : `card-${idx}`;
     const cardItem = input.cards ? input.cards[idx] : null;
     const cardDraft = cardItem?.draft || input.draft;
     const photoSource = cardItem?.photoSource || input.photoSource;
+
+    const draftKey = cardDraft?.look?.id || cardDraft?.skeleton || "default";
+    let assumedBox = draftPhotoBoxCache.get(draftKey);
+    if (!assumedBox && cardDraft) {
+      const dry = renderCard({
+        skeleton: cardDraft.skeleton,
+        blocks: cardDraft.blocks,
+        theme: cardDraft.theme,
+        look: cardDraft.look,
+        person: { id: "dry-run", name: "Sample Person", roleId: "participant" },
+        brand: input.brand,
+        fonts: input.fonts,
+        event: input.eventSpec,
+        card: {
+          widthMm: settings.card.widthMm,
+          heightMm: settings.card.heightMm,
+          orientation: settings.orientation,
+        },
+        bleedMm: settings.bleedMm,
+      });
+      assumedBox = extractPhotoBoxFromScene(dry.scene);
+      if (assumedBox) {
+        draftPhotoBoxCache.set(draftKey, assumedBox);
+      }
+    }
+
+    // photoSource contract: photoSource(pid) wins over person.photo
+    const photoSourceFn =
+      (typeof cardItem?.photoSource === "function" && cardItem.photoSource) ||
+      (typeof input.photoSource === "function" && input.photoSource) ||
+      null;
+
+    let masterPhoto = null;
+    let preparedPhotoUri = person.photo;
+
+    if (photoSourceFn) {
+      try {
+        const srcResult = await photoSourceFn(pid);
+        if (srcResult === null) {
+          // null means "no photo": initials avatar + missing-photo warning
+          preparedPhotoUri = null;
+          masterPhoto = null;
+        } else if (!Buffer.isBuffer(srcResult)) {
+          failingPersonIds.push(pid);
+          allErrors.push({
+            severity: "error",
+            code: "PhotoPrepError",
+            message: `[Person ${pid}] PhotoPrepError: photoSource returned a non-Buffer value`,
+          });
+          continue;
+        } else if (srcResult.length === 0) {
+          failingPersonIds.push(pid);
+          allErrors.push({
+            severity: "error",
+            code: "PhotoPrepError",
+            message: `[Person ${pid}] PhotoPrepError: photoSource returned an empty buffer (0 bytes)`,
+          });
+          continue;
+        } else {
+          masterPhoto = srcResult;
+        }
+      } catch (err) {
+        const msg = /** @type {Error} */ (err).message || "photoSource threw an error";
+        failingPersonIds.push(pid);
+        allErrors.push({
+          severity: "error",
+          code: "PhotoPrepError",
+          message: `[Person ${pid}] PhotoPrepError: ${msg}`,
+        });
+        continue;
+      }
+    } else if (person.photo) {
+      masterPhoto = person.photo;
+    }
+
+    const isImageToPrepare =
+      masterPhoto &&
+      (typeof masterPhoto !== "string" || masterPhoto.startsWith("data:"));
+
+    if (isImageToPrepare && assumedBox) {
+      try {
+        const prep = await preparePhotoForCard(masterPhoto, {
+          boxWmm: assumedBox.w,
+          boxHmm: assumedBox.h,
+          dpi: settings.dpi,
+          personId: pid,
+        });
+        preparedPhotoUri = prep.dataUri;
+      } catch (err) {
+        const prepErr = /** @type {PhotoPrepError} */ (err);
+        failingPersonIds.push(pid);
+        allErrors.push({
+          severity: "error",
+          code: prepErr.code || "INVALID_PHOTO_DATA",
+          message: prepErr.message,
+        });
+        continue;
+      }
+    }
+
+    const effectivePerson = { ...person, photo: preparedPhotoUri };
 
     const renderInput = {
       skeleton: cardDraft?.skeleton,
       blocks: cardDraft?.blocks,
       theme: cardDraft?.theme,
       look: cardDraft?.look,
-      person,
+      person: effectivePerson,
       photoSource,
       brand: input.brand,
       fonts: input.fonts,
@@ -174,16 +285,49 @@ export async function exportZip(input, settingsInput = {}, options = {}) {
       bleedMm: settings.bleedMm,
     };
 
-    const rendered = renderCard(renderInput);
-    const gateResult = checkExportGate(rendered.issues, {
+    let rendered = renderCard(renderInput);
+
+    const realBox = extractPhotoBoxFromScene(rendered.scene);
+    if (realBox && assumedBox && masterPhoto) {
+      if (
+        Math.abs(assumedBox.w - realBox.w) > 0.01 ||
+        Math.abs(assumedBox.h - realBox.h) > 0.01
+      ) {
+        try {
+          const rePrep = await preparePhotoForCard(masterPhoto, {
+            boxWmm: realBox.w,
+            boxHmm: realBox.h,
+            dpi: settings.dpi,
+            personId: pid,
+          });
+          effectivePerson.photo = rePrep.dataUri;
+          renderInput.person = effectivePerson;
+          rendered = renderCard(renderInput);
+        } catch (err) {
+          const prepErr = /** @type {PhotoPrepError} */ (err);
+          failingPersonIds.push(pid);
+          allErrors.push({
+            severity: "error",
+            code: prepErr.code || "INVALID_PHOTO_DATA",
+            message: prepErr.message,
+          });
+          continue;
+        }
+      }
+    }
+    // Explicitly release large master photo buffer before memory-heavy card export
+    /* eslint-disable-next-line no-useless-assignment */
+    masterPhoto = null;
+
+    // Filter false-positive LOGO_DISTORTED on photo nodes (caused by core/render.js hardcoding srcW: 500, srcH: 500)
+    const validIssues = rendered.issues.filter(
+      (i) => !(i.code === "LOGO_DISTORTED" && i.nodeId === "photo")
+    );
+    const gateResult = checkExportGate(validIssues, {
       acknowledgedWarnings: options.acknowledgedWarnings ?? false,
     });
 
     if (!gateResult.ok) {
-      const pid =
-        person && typeof person.id === "string" && person.id.trim() !== ""
-          ? person.id
-          : `card-${idx}`;
       failingPersonIds.push(pid);
       allErrors.push(...gateResult.errors);
       allWarnings.push(...gateResult.warnings);
