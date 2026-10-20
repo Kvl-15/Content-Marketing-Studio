@@ -11,6 +11,35 @@
 
 ## Done
 
+- Task I: Intake Logic + Gemini Gateway (20 October 2026)
+  - Files:
+    - `server/intake/emptySpec.js`, `server/intake/gaps.js`, `server/intake/questions.js`, `server/intake/applyAnswer.js`, `server/intake/lockSpec.js`, `server/intake/index.js`, `server/intake/intake.test.js`, `server/intake/routes.test.js`
+    - `server/ai/gateway.js`, `server/ai/gateway.test.js`
+    - `server/routes/intake.js`, `server/app.js`
+    - `scripts/intake-demo.js`
+    - `.env.example`, `docs/API_CONTRACT.md`, `docs/PROGRESS.md`
+  - Implemented pure intake module in `server/intake/` (zero network, no `Date.now()`, no `Math.random()`):
+    - `emptySpec(designType)` creates initial scaffold with "unknown" statuses and CR80 portrait defaults.
+    - `findGaps(spec)` performs 4-group gap analysis per KB 7.3 (required, defaulted, optional, derived). Values with status `"suggestion"` or unconfirmed source `"suggestion"` count as gaps (D-13). Declined fields do not count as gaps. Real calendar date validation checks valid year/month/day with leap years.
+    - `nextQuestions(spec, declined)` presents 3 to 5 questions in 2 or 3 steps from question bank. Declined values never asked again. Follows D-39 strictly: no QR questions, no photo questions, no landscape or back side questions.
+    - `applyAnswer(spec, answer)` deep clones and applies user answers immutably. Supports `{ path, action: "confirm" | "decline" }` to accept or decline prefilled brief values without retyping. Converts role IDs to lowercase slugs. Derives default role colors spaced by >= 15% in lightness. Validates real calendar dates. Blocks landscape, back sides, and QR toggle.
+    - `lockSpec(spec)` validates against full Zod `EventSpec`, ensures zero required gaps and zero unconfirmed suggestions, and returns a frozen immutable spec. One-line rule: A spec is locked only if it satisfies EventSpec, has zero required gaps, and contains zero unconfirmed suggestions.
+  - Implemented AI Gateway in `server/ai/gateway.js`:
+    - Plain native Node `fetch` (JSON mode) calling Gemini REST API with zero external SDKs.
+    - Enforces D-02 hard zero-invention rule, derives prompt with schema, today's date parameter, and brief text.
+    - Keyword detection for `designType` ("id-card"); leaves unset if unknown.
+    - Evidence check (KB 7.1 step 4) checks all 7 fields (`name`, `venue`, `tagline`, `dates`, `roles`, `palette`, `fields`) and discards any untraced dates, roles, taglines, made-up names/venues, or colors. Surviving values marked `status: "provided"`, `source: "brief"`, `confirmed: false`. Counts like "200 participants" fill `roles[].expectedCount` only.
+    - On failure, retries once with validation error appended; on second failure returns 422 with `BRIEF_PARSE_FAILED` and `emptySpec` for immediate form fallback (D-12, KB 7.1 step 3).
+    - Privacy & Logging (KB 7.7, D-10): Logs brief length and outcome only (`[AI Intake] brief length: N, outcome: ok|retry|failed`). Never logs brief text, never logs or returns API keys, and never sends participant names, emails, or photos to AI. D-10 privacy unit test proves fake participant names and emails never reach the payload.
+  - Implemented 4 Express Routes in `server/routes/intake.js` mounted in `server/app.js`:
+    - `POST /intake/parse` (extracts brief into EventSpec scaffold or returns 422 with emptySpec fallback).
+    - `POST /intake/questions` (returns next questions alongside the 4 gap groups and `hasRequiredGaps`).
+    - `POST /intake/answer` (applies answers or confirms/declines prefilled fields).
+    - `POST /intake/lock` (validates and freezes locked EventSpec).
+  - Created standalone CLI demo: `scripts/intake-demo.js` working with `node --env-file=.env`.
+  - Testing & Verification:
+    - 42 tests across 3 test suites (`server/intake/intake.test.js`, `server/intake/routes.test.js`, `server/ai/gateway.test.js`) passing 100% via `npx vitest run server/intake server/ai`.
+
 - Task S: Server + MongoDB / In-Memory Storage & REST API (20 October 2026)
   - Files:
     - `server/app.js`, `server/cors.js`, `server/assets.js`
@@ -441,6 +470,12 @@
   - `qrPath(url, options)` -> `{ path, d, modules, gridSize, margin }`
   - `renderSvgToPdf(svg, widthMm, heightMm, options)` -> `Promise<Buffer>`
   - `inspectPdfBytes(buffer)` -> `{ pageCount, mediaBoxes, fontCount, hasCreationDate }`
+  - `emptySpec(designType)` -> `EventSpec`
+  - `findGaps(spec)` -> `{ required, defaulted, optional, derived, hasRequiredGaps }`
+  - `nextQuestions(spec, declined)` -> `{ questions, currentStep, totalSteps, allDone }`
+  - `applyAnswer(spec, answer)` -> `{ ok, spec } | { ok: false, error }`
+  - `lockSpec(spec)` -> `{ ok, spec } | { ok: false, error }`
+  - `parseBrief(briefText, options)` -> `Promise<{ ok, spec, designType } | { ok: false, error, emptySpec }>`
 - D-45: Server HTTP API, Storage Backends, and Personal Data Privacy (20 October 2026, Task S / Task S fix):
   1. Express REST API created (`server/app.js`, `server/routes/`, `server/storage/`) wrapping core layout engine, A2 data pipeline, and export engine. Zero unapproved packages (only `express` and `mongoose` added to package.json).
   2. Dual storage backend: in-memory (`createMemoryStorage`) and MongoDB via Mongoose (`createMongoStorage`), selected via `STORAGE=mongo|memory` (defaults to memory if MONGODB_URI is missing). Real `ping()` implemented on Mongo storage (`connection.db.admin().ping()`), surfaced via `GET /health` returning 503 `{ status: "error", storage: "mongo" }` if ping fails.

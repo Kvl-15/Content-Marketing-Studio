@@ -485,6 +485,87 @@ Every endpoint uses the common error envelope: `{ error: { code, message, issues
 - Export progress endpoint deferred tonight (TODO).
 - Downloads are streamed directly in the `POST /projects/:id/export` response.
 
+### 4.8 Intake & AI Gateway (REAL - Task I)
+
+The 4 intake endpoints are: `POST /intake/parse`, `POST /intake/questions`, `POST /intake/answer`, `POST /intake/lock`.
+
+#### `POST /intake/parse` - parse brief with Gemini structured JSON (REAL)
+- **Request body:**
+  ```json
+  {
+    "brief": "ID cards for 24-hour Hackathon at SVNIT Surat on 2026-10-20 with 200 participants",
+    "today": "2026-10-20" /* optional YYYY-MM-DD date override for deterministic tests */
+  }
+  ```
+- **Processing:** Calls Gemini REST via native `fetch` in JSON mode using `GEMINI_MODEL` (default `gemini-3.8-flash`) and `GEMINI_API_KEY`. Enforces D-02 zero-invention prompt. Performs KB 7.1 step 4 evidence check discarding untraced hallucinated values (checks `name`, `venue`, `tagline`, `dates`, `roles`, `palette`, `fields`). Surviving values marked `status: "provided"`, `source: "brief"`, `confirmed: false`. Counts like "200 participants" fill `roles[].expectedCount` only. Detects `designType` keyword ("id-card"); leaves unset if unknown. Retries once on failure.
+- **Privacy & Logging:** Participant names, emails, and photos are NEVER sent to AI (D-10). Logs brief length and outcome ONLY (`[AI Intake] brief length: N, outcome: ok|retry|failed`), never the brief text or API key.
+- **Response body (200):** `{ "status": "ok", "spec": EventSpec, "designType": "id-card" | null }`
+- **Fallback response (422):** `{ "error": { "code": "BRIEF_PARSE_FAILED" | "AI_UNAVAILABLE", "message": string }, "emptySpec": EventSpec }` (provides emptySpec directly so UI opens manual form immediately).
+- **Possible errors:** 400 `INVALID_REQUEST`, 422 `BRIEF_PARSE_FAILED` / `AI_UNAVAILABLE`.
+
+#### `POST /intake/questions` - follow-up question bank & gap status (REAL)
+- **Request body:** `{ "spec": EventSpec, "declined": ["event.tagline"] /* optional */ }`
+- **Processing:** Selects 3 to 5 questions in 2 or 3 steps from question bank. Step 1 (Basics: name, venue, dates, designType), Step 2 (Roles, fields), Step 3 (Optional: tagline, palette). Declined fields are never asked again. D-39 strictly enforced: no QR questions, no photo questions, no landscape or back side questions.
+- **Response body (200):**
+  ```json
+  {
+    "status": "ok",
+    "questions": [ /* 3 to 5 Question objects */ ],
+    "currentStep": 1,
+    "totalSteps": 3,
+    "allDone": false,
+    "gaps": {
+      "required": [ /* { path, label, reason } */ ],
+      "defaulted": [ /* { path, label, value } */ ],
+      "optional": [ /* { path, label, reason } */ ],
+      "derived": [ /* { path, label, reason, value? } */ ]
+    },
+    "hasRequiredGaps": true
+  }
+  ```
+- **Possible errors:** 400 `INVALID_REQUEST`.
+
+#### `POST /intake/answer` - apply user answer or confirmation immutably (REAL)
+- **Request body:**
+  Supports answering with a new value, or confirming/declining brief-extracted values (`action: "confirm" | "decline"`):
+  ```json
+  {
+    "spec": { /* current EventSpec */ },
+    "answer": {
+      "path": "event.name",
+      "action": "confirm"
+    }
+  }
+  ```
+  *(Or with value: `{ "path": "event.dates", "value": ["2026-10-20"] }` or `{ "path": "event.tagline", "action": "decline" }`)*
+- **Processing:** Deep-clones spec and validates answer without mutating input.
+  - When `action: "confirm"` is passed, sets `confirmed: true` on the existing brief-parsed value without requiring the user to retype it. Returns error `CANNOT_CONFIRM_EMPTY` if the field has no value.
+  - When `action: "decline"` or `declined: true` is passed, declines optional fields (`status: "declined"`, `confirmed: true`, `value: null`) and removes the element. Returns `CANNOT_DECLINE_REQUIRED` on required fields.
+  - Role IDs formatted as lowercase slugs; uncolored roles assigned default colors with >= 15% lightness spacing. Validates real calendar dates (valid year/month/day). Blocks landscape, back sides, and QR toggles (D-39).
+- **Response body (200):**
+  ```json
+  {
+    "status": "ok",
+    "spec": {
+      "event": {
+        "name": {
+          "value": "24-hour Hackathon",
+          "status": "provided",
+          "source": "brief",
+          "confirmed": true
+        }
+      }
+    }
+  }
+  ```
+- **Possible errors:** 400 `INVALID_REQUEST`, 422 `CANNOT_DECLINE_REQUIRED` / `CANNOT_CONFIRM_EMPTY` / `INVALID_CALENDAR_DATE` / `INVALID_FIELD_VALUE` / `UNSUPPORTED_CONFIGURATION`.
+
+#### `POST /intake/lock` - lock spec into immutable version (REAL)
+- **Request body:** `{ "spec": EventSpec }`
+- **Processing:** One-line lock rule: A spec is locked only if it satisfies EventSpec, has zero required gaps, and contains zero unconfirmed suggestions. Deep-freezes spec.
+- **Response body (200):** `{ "status": "ok", "spec": EventSpec, "locked": true }`
+- **Possible errors:** 400 `INVALID_REQUEST`, 422 `SPEC_HAS_GAPS` / `UNCONFIRMED_SUGGESTION` / `INVALID_EVENT_SPEC`.
+
 ## 5. Storage & Privacy Architecture (REAL)
 
 1. **Storage Models**: Defined with Zod in `server/storage/schemas.js` (`ProjectSchema`, `VersionSchema`, `StoredPersonSchema`).

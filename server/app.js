@@ -2,6 +2,7 @@
 import express from "express";
 import { createCorsMiddleware } from "./cors.js";
 import { createApiRouter } from "./routes/index.js";
+import { createIntakeRouter } from "./routes/intake.js";
 import { initStorage } from "./storage/index.js";
 import { loadServerAssets } from "./assets.js";
 
@@ -44,6 +45,7 @@ export async function createApp(options = {}) {
 
   // 5. Mount API routes
   app.use(createApiRouter());
+  app.use(createIntakeRouter());
 
   // 6. 404 handler matching API contract
   app.use((req, res) => {
