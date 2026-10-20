@@ -1,0 +1,28 @@
+Export generated 2026-10-19,,,,,,
+ID,Full Name,Role,Organization,Email,Photo URL,Notes
+HX26-001,"Aarav  Shah",Participant,ACM NIT Surat,aarav@example.test,photos/HX26-001.jpg,"double spaces"
+HX26-002,"Zoë Brûlé",Mentor,Open Source Club,zoe@example.test,photos/zoe-profile.jpg,"NFC and accents"
+HX26-003,"Mira & Rao",Organizer,ACM NIT Surat,mira@example.test,,"missing photo"
+HX26-004,"Very Long Name That Exceeds The Usual Card Width And Needs A Warning",Participant,ACM NIT Surat,long@example.test,,"long name"
+HX26-005,Dev Patel,Participant,ACM NIT Surat,dev@example.test,photos/HX26-005.jpg,
+HX26-006,Anika Singh,Mentor,ACM NIT Surat,anika@example.test,photos/HX26-006.jpg,
+HX26-007,Rohan Mehta,Participant,ACM NIT Surat,rohan@example.test,,
+HX26-008,Sana Khan,Organizer,ACM NIT Surat,sana@example.test,photos/HX26-008.jpg,
+HX26-009,Neel Joshi,Participant,ACM NIT Surat,neel@example.test,photos/HX26-009.jpg,
+HX26-010,Ishita Shah,Mentor,ACM NIT Surat,ishita@example.test,,
+HX26-011,Arjun Nair,Participant,ACM NIT Surat,arjun@example.test,photos/HX26-011.jpg,
+HX26-012,"  Kavya  Iyer  ",Participant,ACM NIT Surat,kavya@example.test,,"leading and trailing whitespace"
+HX26-013,Om Verma,Organizer,ACM NIT Surat,om@example.test,photos/HX26-013.jpg,
+HX26-014,Riya Das,Participant,ACM NIT Surat,riya@example.test,photos/HX26-014.jpg,
+HX26-015,Vihaan Jain,Mentor,ACM NIT Surat,vihaan@example.test,,
+HX26-016,Myra Bose,Participant,ACM NIT Surat,myra@example.test,photos/HX26-016.jpg,
+HX26-017,Aditya Roy,Participant,ACM NIT Surat,aditya@example.test,,
+HX26-018,Meera Kulkarni,Organizer,ACM NIT Surat,meera@example.test,photos/HX26-018.jpg,
+HX26-019,Reyansh Gupta,Participant,ACM NIT Surat,reyansh@example.test,,
+HX26-020,Siya Kapoor,Mentor,ACM NIT Surat,siya@example.test,photos/HX26-020.jpg,
+HX26-005,Duplicate ID,Participant,ACM NIT Surat,duplicate@example.test,,"duplicate ID"
+HX26-022,No Role,,ACM NIT Surat,norole@example.test,,"missing role"
+HX26-023,Unknown Role,Guest,ACM NIT Surat,guest@example.test,,"unknown role"
+HX26-024,Duplicate Email,Participant,ACM NIT Surat,aarav@example.test,,"duplicate email"
+HX26-025,"Ānanda  Śreya",Participant,ACM NIT Surat,@formula.example,,=SAFE
+HX26-026,"José Müller",Mentor,ACM NIT Surat,jose@example.test,photos/HX26-026.jpg,+plain-text-cell

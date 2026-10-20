@@ -26,8 +26,12 @@
   },
   "dependencies": {
     "archiver": "^8.0.0",
+    "papaparse": "^5.7.0",
     "puppeteer": "^25.14.0",
     "qrcode": "^1.5.4",
-    "sharp": "^0.35.5"
+    "sharp": "^0.35.5",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
+    "yauzl": "^3.4.0",
+    "zod": "^4.6.7"
   }
 }
