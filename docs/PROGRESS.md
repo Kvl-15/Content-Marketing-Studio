@@ -11,6 +11,41 @@
 
 ## Done
 
+- Task DOCS: README Review Revision & Conflicts Log (21 October 2026)
+  - Files:
+    - `README.md`
+    - `docs/README_CONFLICTS.md`
+    - `docs/PROGRESS.md`
+  - Scope:
+    - Restructure and polish repository root `README.md` based on review feedback without touching application code.
+    - Accurately document photo ingestion cover-crop (0.20 top bias) vs card frame clipping (`core/render.js`), recording head-cropping under Known Issues.
+    - Add missing sections: Troubleshooting (verified behaviors for missing `.env`, invalid Gemini key, unreachable MongoDB, corrupt photos, unmapped CSV roles), Project Status / Known Issues, Worked Example, and Directory Ownership (strictly referencing folder roles, no individual names, linking `docs/AGENT_RULES.md`).
+    - Extract historical design-to-code contradictions from README into dedicated `docs/README_CONFLICTS.md`, citing code files only in Code Evidence.
+    - Align Node engine requirements to `>=22 <23` matching `package.json` and `Dockerfile`.
+    - Shorten decision register to 9 key principles, linking `docs/knowledge-base.md`.
+    - Document deployment branch workflow (`render-deploy` -> `main`) and root vs client `vercel.json` rewrite interaction.
+    - Verify Table of Contents anchors and remove unproven assertions.
+
+
+- Task M1: Export Memory Profiling & Investigation (21 October 2026)
+  - Files:
+    - `scripts/mem-probe.js` (temporary standalone probe)
+    - `docs/PROGRESS.md`
+  - Scope:
+    - Pure investigation of export memory usage across Node.js and Chromium for a 215-attendee event with real photos. Zero behavioral changes and zero existing source file modifications.
+  - Findings:
+    - Node.js idle baseline: 92.59 MB RSS (heap: 23.01 MB).
+    - After loading fonts and brand assets: 164.55 MB RSS (heap: 47.79 MB).
+    - After Phase 1 (photo preparation & 215 card SVGs built): 436.77 MB RSS (heap: 224.14 MB), with 33.81 MB of base64 photo strings created.
+    - After Phase 2 & 3 (sheet layout & 50.2 MB HTML string assembly): 636.06 MB RSS (heap: 394.51 MB).
+    - Before Chromium (after browser launch): 684.39 MB RSS (heap: 444.73 MB), Chromium tree working set: 345.20 MB across 8 processes.
+    - After Chromium (page.setContent & page.pdf): Node RSS: 556.81 MB, Chromium tree working set peak: 552.85 MB across 9 processes.
+    - Monolithic `exportSheet()` direct call: Node RSS peaked at ~548 - 684 MB; Chromium tree working set peaked at 552.85 MB.
+    - Sharp cache: `sharp.cache(false)` is only called in `server/data/photos.js`, NOT in `server/export/photoPrep.js`.
+    - Node alone can plausibly get under 512 MB (by avoiding 215-card SVG in-memory accumulation and streaming HTML/pages).
+    - Node + Chromium combined cannot plausibly get under 512 MB for a monolithic 215-photo export due to Chromium's ~350-550 MB baseline and decoded bitmap working set.
+
+
 - Task GUI-FIX: Preflight Stress-Test Issue Isolation, Stuck Design Button Fix, and Photo-Count Sync (21 October 2026)
   - Files:
     - `client/src/preflightClassification.js`
@@ -749,11 +784,11 @@
 
 ## In progress
 
-- None. Final ID Card Review & Export Workflow (Slice 4) complete.
+- None. README revision and documentation truth log complete.
 
 ## Next
 
-- Stage B Card Back Generation, QR Code Integration, and Multi-surface badge workflows.
+- Await user approval on README.md and docs/README_CONFLICTS.md before committing or merging.
 
 ## Decisions and open questions
 
