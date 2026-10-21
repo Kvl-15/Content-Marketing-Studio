@@ -291,13 +291,14 @@ export async function exportSheet(input, settingsInput = {}, options = {}) {
     // Discover assumed photo box for this draft (one dry run per draft archetype)
     const draftKey = cardDraft?.look?.id || cardDraft?.skeleton || "default";
     let assumedBox = draftPhotoBoxCache.get(draftKey);
+    const fallbackRoleId = input.eventSpec?.roles?.[0]?.id || "participant";
     if (!assumedBox && cardDraft) {
       const dry = renderCard({
         skeleton: cardDraft.skeleton,
         blocks: cardDraft.blocks,
         theme: cardDraft.theme,
         look: cardDraft.look,
-        person: { id: "dry-run", name: "Sample Person", roleId: "participant" },
+        person: { id: "dry-run", name: "Sample Person", roleId: fallbackRoleId },
         brand: input.brand,
         fonts: input.fonts,
         event: input.eventSpec,
@@ -496,9 +497,10 @@ export async function exportSheet(input, settingsInput = {}, options = {}) {
   // 7. PHASE 2: Imposition using core/sheet.js
   const tLayout0 = performance.now();
   // Pass list of cards with id and roleId for role grouping
+  const layoutFallbackRoleId = input.eventSpec?.roles?.[0]?.id || "participant";
   const layoutCardItems = peopleList.map((p, idx) => ({
     id: p.id || `card-${idx}`,
-    role: p.roleId || "participant",
+    role: p.roleId || layoutFallbackRoleId,
   }));
 
   const layoutResult = sheetLayout(settings, layoutCardItems);

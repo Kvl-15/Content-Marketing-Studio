@@ -2,7 +2,7 @@
 import { renderCard } from "./render.js";
 import { distance, MIN_PAIR_DISTANCE } from "./picker.js";
 import { stressSet } from "./stressSet.js";
-import { contrastRatio, relativeLuminance } from "./validate.js";
+import { contrastRatio } from "./validate.js";
 import { deriveTheme, hexToRgb, rgbToHsl } from "./themeDerivation.js";
 
 /**
@@ -375,7 +375,6 @@ function generateHeroPhotoTop(event, prng, lookId, palette, requestedMode) {
 
   const theme = deriveTheme(palette, mode, "event-led", `theme.${lookId}`);
   theme.fonts = { heading: typePair.heading, body: typePair.body };
-  const roleColor = getRoleColor("participant", event);
 
   const skeletonId = `skel.${lookId}`;
   const infoH = 80.2 - (22 + photoH);
@@ -1266,7 +1265,26 @@ export function composeDrafts(event, options) {
   const font = options.font || null;
   const fontRegistry = options.fontRegistry || null;
   const brand = options.brand || null;
-  const dataset = options.stressSet || stressSet;
+  const eventRoles = Array.isArray(event?.roles) && event.roles.length > 0
+    ? event.roles
+    : (Array.isArray(event?.event?.roles) && event.event.roles.length > 0 ? event.event.roles : []);
+
+  let dataset = options.stressSet;
+  if (!dataset) {
+    if (eventRoles.length > 0) {
+      const primaryRole = eventRoles[0].id;
+      const secondaryRole = eventRoles[1]?.id || primaryRole;
+      dataset = stressSet.map((person) => {
+        if (eventRoles.some((r) => r.id === person.roleId)) {
+          return person;
+        }
+        const roleId = person.roleId === "organizer" ? secondaryRole : primaryRole;
+        return { ...person, roleId };
+      });
+    } else {
+      dataset = stressSet;
+    }
+  }
 
   const rawPalette =
     event?.event?.palette ||
@@ -1314,7 +1332,8 @@ export function composeDrafts(event, options) {
       });
 
       // Collect issues for this candidate
-      for (const iss of res.issues || []) {
+      for (const rawIss of res.issues || []) {
+        const iss = { ...rawIss, source: "stress-set" };
         if (!candidateIssues.some((ci) => ci.code === iss.code && ci.message === iss.message && ci.nodeId === iss.nodeId)) {
           candidateIssues.push(iss);
         }
@@ -1331,13 +1350,15 @@ export function composeDrafts(event, options) {
             severity: "warning",
             nodeId: "qr",
             message: `Element 'qr' dropped on card for person '${person.id || person.name || "unknown"}' (hidden via QR_TOO_SMALL autofix to satisfy minimum 15x15 mm)`,
+            source: "stress-set",
           });
         }
       }
 
       const errors = (res.issues || []).filter((iss) => iss.severity === "error");
       if (errors.length > 0) {
-        for (const err of errors) {
+        for (const rawErr of errors) {
+          const err = { ...rawErr, source: "stress-set" };
           if (!dataErrors.some((de) => de.code === err.code && de.message === err.message)) {
             dataErrors.push(err);
           }

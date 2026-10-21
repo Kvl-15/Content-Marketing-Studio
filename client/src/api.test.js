@@ -7,6 +7,10 @@ import {
   createProject,
   uploadProjectData,
   uploadProjectPhotos,
+  composeProjectDrafts,
+  saveProjectVersion,
+  listProjectVersions,
+  exportProject,
 } from "./api.js";
 import {
   getValidAttendeeCount,
@@ -278,6 +282,215 @@ describe("Client API Client (client/src/api.js)", () => {
       await expect(uploadProjectPhotos("proj_123", dummyZip)).rejects.toThrow(
         "Upload tabular data first"
       );
+    });
+  });
+
+  describe("composeProjectDrafts()", () => {
+    it("composes drafts via POST /projects/:id/drafts on 200", async () => {
+      const mockResult = {
+        drafts: [{ svg: "<svg>1</svg>" }, { svg: "<svg>2</svg>" }, { svg: "<svg>3</svg>" }],
+        seed: 12345,
+        issues: [],
+      };
+
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => mockResult,
+      });
+
+      const result = await composeProjectDrafts("proj_123", { count: 3 });
+      expect(result.drafts).toHaveLength(3);
+      expect(result.seed).toBe(12345);
+      expect(global.fetch).toHaveBeenCalledWith(
+        "http://localhost:3000/projects/proj_123/drafts",
+        expect.objectContaining({
+          method: "POST",
+          headers: expect.objectContaining({ "Content-Type": "application/json" }),
+          body: JSON.stringify({ count: 3 }),
+        })
+      );
+    });
+
+    it("throws ApiError when server returns 422 NO_VALID_DRAFT", async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 422,
+        json: async () => ({
+          error: { code: "NO_VALID_DRAFT", message: "No valid draft passed stress test" },
+        }),
+      });
+
+      await expect(composeProjectDrafts("proj_123")).rejects.toThrow(
+        "No valid draft passed stress test"
+      );
+    });
+  });
+
+  describe("saveProjectVersion()", () => {
+    it("snapshots chosen draft into version via POST /projects/:id/versions on 201", async () => {
+      const mockVersion = {
+        versionNumber: 1,
+        draftIndex: 0,
+        draft: { svg: "<svg></svg>" },
+        peopleCount: 50,
+        timestamp: "2026-10-20T12:00:00.000Z",
+      };
+
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 201,
+        json: async () => mockVersion,
+      });
+
+      const result = await saveProjectVersion("proj_123", { draftIndex: 0, note: "Initial" });
+      expect(result.versionNumber).toBe(1);
+      expect(result.draftIndex).toBe(0);
+      expect(result.peopleCount).toBe(50);
+      expect(global.fetch).toHaveBeenCalledWith(
+        "http://localhost:3000/projects/proj_123/versions",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ draftIndex: 0, note: "Initial" }),
+        })
+      );
+    });
+
+    it("throws ApiError on 400 NO_DRAFTS error", async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 400,
+        json: async () => ({
+          error: { code: "NO_DRAFTS", message: "Compose drafts first" },
+        }),
+      });
+
+      await expect(saveProjectVersion("proj_123", { draftIndex: 1 })).rejects.toThrow(
+        "Compose drafts first"
+      );
+    });
+  });
+
+  describe("listProjectVersions()", () => {
+    it("returns array of versions via GET /projects/:id/versions on 200", async () => {
+      const mockVersions = [
+        { versionNumber: 1, draftIndex: 0, peopleCount: 50 },
+        { versionNumber: 2, draftIndex: 2, peopleCount: 50 },
+      ];
+
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => mockVersions,
+      });
+
+      const result = await listProjectVersions("proj_123");
+      expect(result).toHaveLength(2);
+      expect(result[0].versionNumber).toBe(1);
+      expect(global.fetch).toHaveBeenCalledWith(
+        "http://localhost:3000/projects/proj_123/versions",
+        expect.objectContaining({ method: "GET" })
+      );
+    });
+  });
+
+  describe("exportProject()", () => {
+    it("handles successful binary PDF sheet export on 200 with Content-Disposition", async () => {
+      const mockBlob = new Blob(["mock-pdf-content"], { type: "application/pdf" });
+
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: new Headers({
+          "Content-Type": "application/pdf",
+          "Content-Disposition": 'attachment; filename="NSH26-print-sheets.pdf"',
+        }),
+        blob: async () => mockBlob,
+      });
+
+      const result = await exportProject("proj_123", {
+        version: 1,
+        kind: "sheet",
+        format: "pdf",
+        paper: "A4",
+        acknowledgedWarnings: true,
+      });
+
+      expect(result.filename).toBe("NSH26-print-sheets.pdf");
+      expect(result.mimeType).toBe("application/pdf");
+      expect(result.size).toBe(mockBlob.size);
+      expect(global.fetch).toHaveBeenCalledWith(
+        "http://localhost:3000/projects/proj_123/export",
+        expect.objectContaining({
+          method: "POST",
+          headers: expect.objectContaining({ "Content-Type": "application/json" }),
+          body: JSON.stringify({
+            version: 1,
+            kind: "sheet",
+            format: "pdf",
+            paper: "A4",
+            acknowledgedWarnings: true,
+          }),
+        })
+      );
+    });
+
+    it("handles successful batch ZIP export on 200", async () => {
+      const mockBlob = new Blob(["mock-zip-content"], { type: "application/zip" });
+
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: new Headers({
+          "Content-Type": "application/zip",
+          "Content-Disposition": 'attachment; filename="export.zip"',
+        }),
+        blob: async () => mockBlob,
+      });
+
+      const result = await exportProject("proj_123", {
+        kind: "zip",
+        format: "pdf",
+        acknowledgedWarnings: true,
+      });
+
+      expect(result.filename).toBe("export.zip");
+      expect(result.mimeType).toBe("application/zip");
+    });
+
+    it("throws ApiError with PREFLIGHT_FAILED on 422 with validation issues", async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 422,
+        json: async () => ({
+          error: {
+            code: "PREFLIGHT_FAILED",
+            message: "Unacknowledged warnings",
+            issues: [{ code: "NO_PHOTO", severity: "warning", message: "Missing photo" }],
+          },
+        }),
+      });
+
+      await expect(
+        exportProject("proj_123", { kind: "sheet", format: "pdf" })
+      ).rejects.toThrow("Unacknowledged warnings");
+    });
+
+    it("throws ApiError with EXPORT_IN_PROGRESS on 409 concurrency lock", async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 409,
+        json: async () => ({
+          error: {
+            code: "EXPORT_IN_PROGRESS",
+            message: "An export is already running for project",
+          },
+        }),
+      });
+
+      await expect(
+        exportProject("proj_123", { kind: "sheet" })
+      ).rejects.toThrow("An export is already running for project");
     });
   });
 

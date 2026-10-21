@@ -833,6 +833,30 @@ describe("Spike C1 + C2: Dynamic Look Composition and Quality Scorer", () => {
     expect(roleIssues[0].message).toContain("boss");
   });
 
+  it("adapts default stressSet roles when event has custom role IDs (e.g. participants and mentors)", () => {
+    const customRoleSpec = {
+      ...sampleEventSpec,
+      roles: [
+        { id: "participants", label: "Participants", color: { value: "#2563EB" }, expectedCount: 100 },
+        { id: "mentors", label: "Mentors", color: { value: "#10B981" }, expectedCount: 20 },
+      ],
+    };
+
+    const result = composeDrafts(customRoleSpec, {
+      seed: "test-custom-roles",
+      count: 3,
+    });
+
+    expect(result.drafts).toHaveLength(3);
+    const unknownRoleErrors = (result.issues || []).filter((i) => i.code === "UNKNOWN_ROLE_ID");
+    expect(unknownRoleErrors).toHaveLength(0);
+
+    for (const draft of result.drafts) {
+      const draftRoleErrors = (draft.issues || []).filter((i) => i.code === "UNKNOWN_ROLE_ID");
+      expect(draftRoleErrors).toHaveLength(0);
+    }
+  });
+
   describe("Task P0-1: Design-Freeze Spacing, 5.5 pt Floor, Palette Tones, and Drop Order", () => {
     const staticFontRegistry = {
       "space-grotesk": {

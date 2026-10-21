@@ -11,6 +11,238 @@
 
 ## Done
 
+- Task GUI-FIX: Preflight Stress-Test Issue Isolation, Stuck Design Button Fix, and Photo-Count Sync (21 October 2026)
+  - Files:
+    - `client/src/preflightClassification.js`
+    - `client/src/preflightClassification.test.js`
+    - `client/src/components/ExportWorkflowStep.jsx`
+    - `client/src/components/DesignPreviewStep.jsx`
+    - `server/storage/schemas.js`
+    - `server/storage/schemas.test.js`
+    - `docs/API_CONTRACT.md`
+    - `docs/PROGRESS.md`
+  - Problem Solved:
+    - In `ExportWorkflowStep.jsx`, preflight issues read from `selectedVersion.draft.issues` contained synthetic persona notices (such as `NO_PHOTO` on persona `HX26-S-007` generated during composer layout stress testing). This caused the preflight panel to display `NO_PHOTO` warnings and disabled the export button unless the user checked the "acknowledge warnings" box, even when 100% of real attendees had valid photos.
+    - In `DesignPreviewStep.jsx`, the design selection button was hardcoded to `isSelected = latestVersion?.draftIndex === index`, causing the button to remain disabled ("✓ Selected") even after regenerating new draft variations or uploading newer attendee photos.
+    - The client had no privacy-preserving way to know how many photos were attached in current data vs the saved version snapshot without leaking attendee personal rows.
+  - Fix Delivered:
+    1. Preflight Issue Classification Helper (`client/src/preflightClassification.js`):
+       - `isStressSetIssue()` distinguishes sample persona stress-test issues (`source: "stress-set"`, `HX26-S-00[1-8]`, untagged legacy draft issues) from genuine attendee issues. Real attendee issues (where personId matches current attendee data) are strictly retained.
+       - `partitionPreflightIssues()` separates issues into real `attendeeIssues` and non-blocking `stressTestIssues`.
+       - `evaluateExportGate()` enables export without requiring an acknowledgement tick when only stress issues exist; requires tick for real warnings; unconditionally blocks export for real errors. Fails safe on bad/malformed input without crashing.
+    2. Additive `photoCount` Metric (`server/storage/schemas.js`, `docs/API_CONTRACT.md`):
+       - Added integer-only `photoCount` to `toPublicProject` and `toPublicVersion`, counting attendees whose photo is truthy and non-empty. Missing/non-array data returns 0.
+       - Preserves full personal data privacy: zero attendee rows, names, or emails are returned in responses.
+    3. UI Enhancements:
+       - In `ExportWorkflowStep.jsx`: Part (a) displays `"Attendee checks run on the server when you export."` (never invented "All checks passed"). Part (b) presents collapsible stress-test notices. Non-blocking notice displayed when newer photos were uploaded after the selected version was saved. Server 422 errors render code, severity, and nodeId, showing the acknowledgement checkbox only when all server issues are warnings.
+       - In `DesignPreviewStep.jsx`: Integrated `getDesignSelectionState()`. Dynamically toggles between `LOCKED` (disabled), `UPDATE_AVAILABLE` (enabled to save Version N+1 with newly uploaded photos), and `NEW_DESIGN` (enabled for fresh drafts or rerolls). Added clear notice on reroll that drafts are previews until selected.
+  - Verification:
+    - 19/19 tests passing in `client/src/preflightClassification.test.js`.
+    - 5/5 tests passing in `server/storage/schemas.test.js`.
+    - 23/23 tests passing in `server/server.smoke.test.js`.
+    - Client production build succeeds in 1.53s with 0 errors.
+
+
+- Sanitizer Safety Hardening & ZIP Photo Ingestion (21 October 2026)
+  - Files:
+    - `server/data/photos.js`
+    - `server/data/photos.test.js`
+    - `server/routes/photos.js`
+    - `server/storage/schemas.js`
+    - `server/storage/mongo.js`
+    - `server/storage/memory.js`
+    - `core/composer.js`
+    - `core/picker.js`
+    - `core/validate.js`
+    - `client/src/components/PhotoUploadStep.jsx`
+    - `client/src/components/ExportWorkflowStep.jsx`
+    - `server/server.smoke.test.js`
+    - `docs/API_CONTRACT.md`
+    - `docs/PROGRESS.md`
+  - Problem Solved:
+    - ZIP photo ingestion failed or reported "unsupported format" due to directory entries (`photos/`) having their trailing slash stripped in `safeZipPath`, non-image text files (`README.txt`) raising `UNSUPPORTED_PHOTO_FORMAT`, and `server/routes/photos.js` looking for `match.id` instead of `match.row?.id`, which left `project.people` with 0 photos attached.
+    - The synthetic-role-issue sanitizer introduced during Slice 4 was over-broad (filtering out any issue with `dry-run`, `PREVIEW-`, or `HX26-S-*` regardless of attendee data or role value) and performed write-on-read (`updateOne`) in `mongo.js` `getProject()`.
+  - Fix Delivered:
+    1. ZIP Photo Ingestion Pipeline Hardening:
+       - `safeZipPath()` preserves directory slashes so directory entries (`/\/$/u.test(path)`) are cleanly skipped.
+       - Operating system metadata (`__MACOSX/`, `._*`, `.DS_Store`, `Thumbs.db`, `desktop.ini`) is skipped without warnings. Path-traversal checks run strictly before directory/metadata skipping.
+       - Harmless non-image text files (`.txt`, `.md`, `.nfo`) are captured in `result.ignoredFiles` and returned in the HTTP upload response as non-blocking notes. Unknown non-image file types (e.g. `.bmp`, `.gif`) continue to be reported as `UNSUPPORTED_PHOTO_FORMAT`.
+       - Content magic byte validation: Image format is determined by byte signatures (JPEG, PNG, WebP), not file extension alone. Valid JPEG bytes named `.png` are accepted as JPEG; corrupted data is rejected with `PHOTO_UNSUPPORTED_OR_CORRUPT` without ingestion crashes.
+       - Apple CgBI PNG rejection: Detects Apple's proprietary CgBI chunk signature and rejects with explicit error message: `"Apple CgBI-compressed PNG photos are not supported; convert to standard PNG or JPEG"`.
+       - Bulk storage write & Version Immutability: In `server/routes/photos.js`, resolved `match.row?.id || match.id` so all matched photos are attached to `project.people` in ONE single storage operation (`storage.addDatasetReport`). Proved that attaching photos does NOT modify saved `versions` snapshots (version snapshots remain completely immutable).
+       - Fixture Verification: Tested 215 people vs 216 photos fixture (`attendee_001.png` to `attendee_216.png` matching `attendee_001` through `attendee_215` plus 1 unmatched photo `attendee_216.png` and `README.txt`), verifying 215 matches, 1 unmatched file, 0 unmatched rows, and 215 photos attached in storage.
+    2. Strict 4-Point Sanitizer Rule:
+       - `isSyntheticStressRoleIssue()` treats an issue as synthetic ONLY when ALL 4 conditions hold:
+         1. Issue code is `UNKNOWN_ROLE_ID`.
+         2. Person ID matches `HX26-S-00[1-8]`.
+         3. Role is `"participant"` or `"organizer"`.
+         4. Person ID does not exist in the project's current attendee data (`project.people`).
+       - If person ID is `"boss"`, or role is empty `""`, or person ID is a real attendee, or if the issue comes from any other source (or other issue codes), IT IS KEPT.
+       - Tagged newly generated stress-set candidate issues at creation time with `source: "stress-set"` in `core/composer.js` and `core/picker.js`.
+    3. Strictly Read-Only Storage Access:
+       - Removed `updateOne`, `$unset`, and all write-on-read operations from `server/storage/mongo.js` and `server/storage/memory.js` `getProject()`. `getProject()` is strictly read-only.
+       - *Note on Production Data:* Earlier code versions may already have rewritten data in Atlas. This change does not run production cleanup against Atlas, leaving existing production records untouched while preventing any future write-on-read mutations.
+  - Verification:
+    - 21/21 tests passing in `server/data/photos.test.js` (including 215 people vs 216 photos, CgBI rejection, ignored text files, magic byte content detection, empty/generic MIME, invalid ZIP).
+    - 23/23 tests passing in `server/server.smoke.test.js` (including bulk photo upload, version immutability verification, 4-point sanitizer test cases 2a-2f, and read-only storage verification).
+    - 97/97 tests passing in `core/composer.test.js`, `core/picker.test.js`, `server/export/export.test.js`, and `server/data/data.test.js`.
+    - 25/25 client API tests passing in `client/src/api.test.js`.
+    - Client production build succeeds in 1.33s (0 errors).
+    - ESLint: 0 errors across `server/` and `core/validate.js`.
+
+- Runtime Stale Synthetic Role Issues Sanitizer & GUI Version Switcher Fix (21 October 2026)
+  - Files:
+    - `server/storage/schemas.js`
+    - `server/storage/mongo.js`
+    - `server/storage/memory.js`
+    - `client/src/components/ExportWorkflowStep.jsx`
+    - `server/server.smoke.test.js`
+    - `core/composer.js`
+    - `docs/PROGRESS.md`
+  - Problem Solved:
+    - Even after the composer stress-set adaptation was fixed for newly composed drafts, existing projects persisted in MongoDB Atlas (`STORAGE=mongo`) or memory had old `currentDrafts`, `draftIssues`, and saved `versions` containing the 8 synthetic `UNKNOWN_ROLE_ID` errors for `HX26-S-001` through `HX26-S-008` (roles `participant` and `organizer`).
+    - In `ExportWorkflowStep.jsx`, preflight errors were evaluated directly from `selectedVersion.draft.issues`. Because the stored version in MongoDB had those 8 synthetic issues, the GUI blocked export with "Export Blocked (Rule D-09): 8 validation error(s) must be resolved", despite all 215 real CSV attendees having 100% valid roles (`participants` and `mentors`).
+    - Additionally, `ExportWorkflowStep.jsx` had no version switcher: it hardcoded `selectedVersion = versions[versions.length - 1]`, preventing users from inspecting or switching between saved versions.
+  - Fix Delivered:
+    1. Automatic Storage Sanitizer (`server/storage/schemas.js`, `mongo.js`, `memory.js`):
+       - Added `sanitizeSyntheticRoleIssues()` and `sanitizeProjectIssues()`, which detect and purge synthetic `UNKNOWN_ROLE_ID` errors referencing `HX26-S-*`, `dry-run`, or `PREVIEW-`.
+       - In `mongo.js` `getProject(id)`, when a stored project contains synthetic role issues, it sanitizes them in-memory and automatically persists the healed document back to MongoDB (`updateOne`) so Atlas is permanently cleansed.
+       - In `mongo.js` and `memory.js` `saveVersion(id, ...)` and `addDrafts(id, ...)`, synthetic issues are filtered before snapshots or drafts are saved.
+       - In `toPublicProject()` and `toPublicVersion()`, synthetic issues are stripped from responses returned to clients.
+    2. Frontend Preflight Assessment Filter & Version Selector (`client/src/components/ExportWorkflowStep.jsx`):
+       - Excluded synthetic stress issues from preflight error/warning counts so stale browser snapshots do not falsely block export. Genuine participant errors on non-synthetic records continue to strictly block export under Rule D-09.
+       - Added an interactive Version Selector dropdown in the review card header when `versions.length > 1`, allowing users to choose and verify any saved version snapshot.
+    3. Live Database Healing & End-to-End Verification:
+       - Executed verification against MongoDB Atlas: project `proj_1792527678094_h0afi5df` ("32-hour coding competition", 215 attendees) was loaded, verified healed, and all 8 `UNKNOWN_ROLE_ID` errors were confirmed permanently removed across drafts and versions (count: 0).
+       - Added an end-to-end integration test in `server/server.smoke.test.js` validating custom role IDs (`participants` and `mentors`) from CSV intake through draft composition, version saving, storage healing, print sheet PDF export (200 OK), and strict rejection of unregistered roles (`boss`) with 422.
+  - Verification:
+    - 14/14 tests passing in `server/server.smoke.test.js`.
+    - 15 test files / 257 tests passing in `core/`.
+    - 11 test files / 180 tests passing in `server/`.
+    - 25/25 client API unit tests passing.
+    - Client production build succeeds in 1.38s (0 errors).
+    - ESLint: 0 errors across `server/` and `client/`.
+
+- Custom Role ID Resolution & Stress Dataset Role Adaptation Fix (21 October 2026)
+  - Files:
+    - `core/composer.js`
+    - `core/picker.js`
+    - `core/render.js`
+    - `server/export/exportCard.js`
+    - `server/export/exportSheet.js`
+    - `server/export/exportBatch.js`
+    - `core/composer.test.js`
+    - `server/data/data.test.js`
+    - `server/routes/drafts.test.js`
+    - `server/export/export.test.js`
+    - `docs/PROGRESS.md`
+  - Problem Solved:
+    - When an event is configured with custom role IDs (e.g. `roles: [{ id: "participants" }, { id: "mentors" }]`), CSV import correctly maps and preserves those exact role IDs in `project.people`.
+    - However, during draft composition (`composeDrafts`), candidates were evaluated against the static Part 15 stress set (`core/stressSet.js`), whose 8 synthetic records hardcoded `id: "HX26-S-001"` through `"HX26-S-008"` with `roleId: "participant"` and `"organizer"`.
+    - Because neither `"participant"` nor `"organizer"` existed in the event's configured roles, `renderCard`'s validator correctly raised `UNKNOWN_ROLE_ID` on all 8 synthetic stress records.
+    - These 8 `UNKNOWN_ROLE_ID` errors were collected into `candidate.issues`, attached to each candidate draft, saved into the immutable version snapshot, and subsequently blocked print-ready export at the preflight dashboard with 8 `UNKNOWN_ROLE_ID` errors.
+    - Furthermore, `dry-run` card renders in `exportSheet.js`, `exportCard.js`, and `exportBatch.js` hardcoded `roleId: "participant"` as their fallback.
+  - Fix Delivered:
+    1. Dynamic Role Adaptation for Default Stress Sets (`core/composer.js` & `core/picker.js`):
+       - When `composeDrafts` and `createDefaultRunStress` evaluate candidates using the default `stressSet`, the stress test persons dynamically adapt to valid role IDs from `event.roles` (mapping `"organizer"` to the secondary role and `"participant"` to the primary role) if they are not already valid.
+       - Caller-provided custom `options.stressSet` datasets remain unmapped, strictly preserving genuine `UNKNOWN_ROLE_ID` error detection when testing bad data.
+    2. Dynamic Role Fallbacks in Export Engines:
+       - In `server/export/exportCard.js`, `server/export/exportSheet.js`, `server/export/exportBatch.js`, and `core/render.js`, replaced hardcoded `"participant"` dry-run and layout fallbacks with `input.eventSpec?.roles?.[0]?.id || "participant"`.
+    3. Comprehensive Regression Tests:
+       - `core/composer.test.js`: Verified `composeDrafts` with custom roles `participants` and `mentors` produces 3 drafts with 0 `UNKNOWN_ROLE_ID` errors.
+       - `server/data/data.test.js`: Verified CSV import with `name, role, organization` headers and values `participants` and `mentors` imports valid attendees with exact role IDs and without error. Also verified that genuinely unknown role IDs (e.g. `boss`) are rejected.
+       - `server/routes/drafts.test.js`: Verified `POST /projects/:id/drafts` for an event with `participants` and `mentors` generates `roleSvgs` for both roles and 0 `UNKNOWN_ROLE_ID` errors.
+       - `server/export/export.test.js`: Verified single-card export succeeds for `participants` while rejecting unregistered roles (`boss`) at the D-09 gate.
+  - Verification:
+    - 33/33 tests passed in `core/composer.test.js`.
+    - 18/18 tests passed in `server/data/data.test.js`.
+    - 5/5 tests passed in `server/routes/drafts.test.js`.
+    - 32/32 tests passed in `server/export/export.test.js`.
+    - 13/13 tests passed in `server/server.smoke.test.js`.
+    - Full repository test suite: 26 test files, 448 tests passed (0 failures).
+    - Client production build: vite built in 1.28s with 0 errors.
+    - ESLint: 0 errors on client and server.
+
+- ID Card Review, Preflight Validation & Print-Ready Export Workflow (Slice 4) (21 October 2026)
+  - Files:
+    - `client/src/api.js`
+    - `client/src/components/ExportWorkflowStep.jsx`
+    - `client/src/components/ProjectWorkflow.jsx`
+    - `client/src/style.css`
+    - `client/src/api.test.js`
+    - `docs/PROGRESS.md`
+  - Features Delivered:
+    1. Preflight Validation & Gate Dashboard (`client/src/components/ExportWorkflowStep.jsx`):
+       - Directly surfaces server-side Rule D-09 preflight checks. Evaluates candidate issues against the selected immutable version snapshot and attendee dataset.
+       - Distinguishes fatal errors (which disable export action) from non-fatal warnings (which require an explicit acknowledgement checkbox: `acknowledgedWarnings: true`).
+       - Formats issue labels and messages cleanly, preventing dangling text and preserving transparent issue reporting.
+    2. Version Review & Context Display:
+       - Displays card specifications: dimensions 54 mm × 85.6 mm (CR80), bleed 3.0 mm, safe margin 3.0 mm, print layout, total participant count, and selected archetype, palette mode, typography, and version snapshot note.
+       - Live interactive role switcher tab preview embedded directly in the review step, allowing instant visual inspection of how different participant roles render under the chosen version snapshot.
+    3. Production-Ready Export Configuration:
+       - Scope selection:
+         - Print Sheets (`kind: "sheet"`) for multi-card batch print imposition on A4/A3 paper (PDF and SVG format), with configurable printer safe margin (0–20 mm) and auto crop marks.
+         - Individual Card Batch (`kind: "zip"`) streaming all cards in an archive (PDF, SVG, PNG at 300 DPI) with safe unique filenames based on participant IDs.
+         - Single Test Card (`kind: "card"`) allowing single-attendee preview proofing (PDF, SVG, PNG) selected via safe participant ID selector.
+       - Orientation & sides constraints enforced according to backend rules (portrait front-only).
+    4. Robust Binary Download Engine (`client/src/api.js`):
+       - `exportProject(projectId, exportSettings)` calls `POST /projects/:id/export` with binary response handling.
+       - Extracts clean download filename from `Content-Disposition` header with robust fallbacks.
+       - Dispatches browser file downloads using clean `Blob` object URLs with auto-cleanup.
+       - Enables "Download Again" directly from the cached blob in memory without triggering duplicate server export requests or re-rendering.
+       - Intercepts 422 preflight failures and 409 concurrency lock responses, formatting them into clear user-facing alerts.
+    5. Workflow Stepper Integration:
+       - Added Step 4 ("Review & Export") to the main workflow stepper in `ProjectWorkflow.jsx`.
+       - Provided smooth navigation pills ("Jump to Export" and "Continue to Step 4") in earlier steps once an immutable version is locked.
+    6. Verification & Test Suite:
+       - Added comprehensive unit tests in `client/src/api.test.js` covering sheet PDF export, batch ZIP export, preflight failure issue parsing, and concurrency 409 handling.
+       - All 25 client API unit tests passing.
+       - All 4 drafts tests passing.
+       - All 13 server smoke tests passing.
+       - Full repository test suite passing (26 test files, 443 tests, 0 failures).
+       - Client production build succeeds in < 1 second.
+       - ESLint: 0 errors across client and server.
+
+- ID Card Design Generation & Preview Workflow (Slice 3) (20 October 2026)
+  - Files:
+    - `server/routes/drafts.js`
+    - `client/src/api.js`
+    - `client/src/components/DesignPreviewStep.jsx`
+    - `client/src/components/ProjectWorkflow.jsx`
+    - `client/src/style.css`
+    - `server/routes/drafts.test.js`
+    - `client/src/api.test.js`
+    - `docs/PROGRESS.md`
+  - Features Delivered:
+    1. Backend Role Variants & Photo Handling:
+       - Enhanced `server/routes/drafts.js` to dynamically generate preview variants in `draft.roleSvgs` for every role defined in `eventSpec.roles`.
+       - Resolves matched attendee photos from disk (`os.tmpdir()/acm-studio/<projectId>`) into base64 data URIs (`data:image/jpeg;base64,...`), embedding them directly into `<image>` elements without exposing local filesystem paths.
+       - Renders fallback initials avatars for missing photos cleanly without throwing.
+       - Enforces strict participant privacy (D-10): uses safe standard preview attendee fixture during draft composition so real participant PII is never stored in public drafts, scene graphs, or returned in `GET /projects/:id`.
+    2. Client REST API Wrappers (`client/src/api.js`):
+       - `composeProjectDrafts(projectId, options)` -> `POST /projects/:id/drafts`
+       - `saveProjectVersion(projectId, { draftIndex, note })` -> `POST /projects/:id/versions`
+       - `listProjectVersions(projectId)` -> `GET /projects/:id/versions`
+    3. Design Generation, Role Switching & Version Selection UI (`client/src/components/DesignPreviewStep.jsx`):
+       - Unlocked only when valid participant data exists (`hasDataset === true`). Gated with clear instructions when dataset is missing.
+       - Inviting Empty State with single-click "✦ Generate ID Card Designs" trigger with busy status indicators.
+       - Role Switcher tabs dynamically generated from `project.eventSpec.roles` (with color dots and labels, never hardcoding roles), instantly updating vector previews across all designs.
+       - 3-Column responsive comparison grid rendering vector SVGs in proper CR80 card aspect ratio (54mm × 85.6mm).
+       - Design metadata chips displaying archetype, palette mode, typography, and quality score.
+       - Re-roll action ("↻ Generate Different Variations") to generate new designs with fresh seeds.
+       - Snapshot selection action calling `POST /projects/:id/versions` with immediate feedback: "✓ Selected (Version N)" badge and confirmation banner.
+       - Restores existing drafts and latest chosen version seamlessly when reopening projects via `GET /projects/:id`.
+    4. Workflow Integration & Stepper:
+       - Integrated Step 3 ("Design & Preview") into the Phase Stepper in `ProjectWorkflow.jsx`.
+       - Added smooth scroll jump action to Card Designs.
+    5. Verification & Tests:
+       - Unit tests in `server/routes/drafts.test.js` (4/4 passed).
+       - Unit tests in `client/src/api.test.js` (21/21 passed).
+       - Server smoke tests in `server/server.smoke.test.js` (13/13 passed).
+       - Full repository test suite: 26 test files, 439 tests passed (0 failures).
+       - Client production build: `npm run build --workspace=@acm-studio/client` built in 826ms with 0 errors.
+       - ESLint: 0 errors on client and server.
+
 - Photo Upload Gating & Valid Attendee Calculation Fix (20 October 2026)
   - Files:
     - `client/src/components/ProjectWorkflow.jsx`
@@ -517,11 +749,11 @@
 
 ## In progress
 
-- None. Frontend Slice 2 (Project Dashboard, Creation, and Data/Photo Upload) complete.
+- None. Final ID Card Review & Export Workflow (Slice 4) complete.
 
 ## Next
 
-- Frontend Slice 3: Draft Composition, SVG Card Preview with Shared Renderer, Version Saving, and Print-Ready Exports.
+- Stage B Card Back Generation, QR Code Integration, and Multi-surface badge workflows.
 
 ## Decisions and open questions
 

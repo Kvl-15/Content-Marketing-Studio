@@ -276,6 +276,7 @@ export function checkUnfilledData(scene) {
  * @param {any[]} [_scene]
  * @returns {any[]}
  */
+/* eslint-disable-next-line no-unused-vars */
 export function checkNoPhoto(person, _scene) {
   if (!person) return [];
   if (person.photo === null || person.photo === undefined || person.flags?.includes("NO_PHOTO")) {
@@ -569,6 +570,8 @@ export function checkUnknownRoleId(person, event, scene = []) {
         code: "UNKNOWN_ROLE_ID",
         nodeId: roleNode ? roleNode.id : "role",
         message: `Person "${personId}" has invalid or unrecognised roleId "${String(roleId)}"; must match an id in event.roles`,
+        personId,
+        roleId: String(roleId),
       },
     ];
   }

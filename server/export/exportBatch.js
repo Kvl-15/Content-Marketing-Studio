@@ -168,13 +168,14 @@ export async function exportZip(input, settingsInput = {}, options = {}) {
 
     const draftKey = cardDraft?.look?.id || cardDraft?.skeleton || "default";
     let assumedBox = draftPhotoBoxCache.get(draftKey);
+    const fallbackRoleId = input.eventSpec?.roles?.[0]?.id || "participant";
     if (!assumedBox && cardDraft) {
       const dry = renderCard({
         skeleton: cardDraft.skeleton,
         blocks: cardDraft.blocks,
         theme: cardDraft.theme,
         look: cardDraft.look,
-        person: { id: "dry-run", name: "Sample Person", roleId: "participant" },
+        person: { id: "dry-run", name: "Sample Person", roleId: fallbackRoleId },
         brand: input.brand,
         fonts: input.fonts,
         event: input.eventSpec,
@@ -353,9 +354,10 @@ export async function exportZip(input, settingsInput = {}, options = {}) {
   const fileNames = uniqueFileNames(peopleList, settings.format);
 
   // 7. PHASE 3: Privacy-safe manifest entries: id, roleId, fileName ONLY
+  const manifestFallbackRoleId = input.eventSpec?.roles?.[0]?.id || "participant";
   const manifest = peopleList.map((p, idx) => ({
     id: p.id || `card-${idx}`,
-    roleId: p.roleId || "participant",
+    roleId: p.roleId || manifestFallbackRoleId,
     fileName: fileNames[idx],
   }));
 

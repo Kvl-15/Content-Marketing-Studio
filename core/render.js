@@ -126,7 +126,8 @@ export function renderCard(input) {
 
   const brand = input.brand || null;
   const event = input.event || null;
-  const person = input.person || { id: "HX26-P-000", name: "Participant", roleId: "participant" };
+  const fallbackRoleId = event?.roles?.[0]?.id || event?.event?.roles?.[0]?.id || "participant";
+  const person = input.person || { id: "HX26-P-000", name: "Participant", roleId: fallbackRoleId };
 
   const orientation = input.card?.orientation || "portrait";
   const isLandscape = orientation === "landscape";

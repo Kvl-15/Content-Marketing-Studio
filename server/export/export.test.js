@@ -743,5 +743,64 @@ describe("E2a: Single-Card Export & D-09 Gate", () => {
       expect(diskMeta.height).toBe(1082);
       expect(diskMeta.density).toBe(300);
     });
+
+    it("exports card cleanly for an event with custom role IDs like 'participants' and 'mentors'", async () => {
+      const customRoleSpec = {
+        ...sampleEventSpec,
+        roles: [
+          { id: "participants", label: "Participants", color: { value: "#2563EB" }, expectedCount: 100 },
+          { id: "mentors", label: "Mentors", color: { value: "#10B981" }, expectedCount: 20 },
+        ],
+      };
+      const customDrafts = composeDrafts(customRoleSpec, {
+        seed: 42,
+        count: 1,
+        fonts: testFonts,
+        brand: brandWithLogos,
+      });
+
+      const validPerson = {
+        ...personNormal,
+        id: "HX26-P-001",
+        roleId: "participants",
+      };
+
+      const result = await exportCard(
+        {
+          eventSpec: customRoleSpec,
+          draft: customDrafts.drafts[0],
+          person: validPerson,
+          brand: brandWithLogos,
+          fonts: testFonts,
+        },
+        { format: "svg", bleedMm: 3 },
+        { acknowledgedWarnings: true },
+      );
+
+      expect(result.ok).toBe(true);
+      expect(result.fileName).toBe("HX26-P-001.svg");
+
+      // Verify that genuinely unknown role ID fails the export gate
+      const invalidPerson = {
+        ...personNormal,
+        id: "HX26-P-002",
+        roleId: "boss",
+      };
+
+      const badResult = await exportCard(
+        {
+          eventSpec: customRoleSpec,
+          draft: customDrafts.drafts[0],
+          person: invalidPerson,
+          brand: brandWithLogos,
+          fonts: testFonts,
+        },
+        { format: "svg", bleedMm: 3 },
+        { acknowledgedWarnings: true },
+      );
+
+      expect(badResult.ok).toBe(false);
+      expect(badResult.errors?.some((e) => e.code === "UNKNOWN_ROLE_ID")).toBe(true);
+    }, 25000);
   });
 });

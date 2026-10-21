@@ -209,13 +209,14 @@ export async function exportCard(input, settingsInput = {}, options = {}) {
     (typeof masterPhoto !== "string" || masterPhoto.startsWith("data:"));
 
   if (isImageToPrepare && input.draft && person) {
+    const fallbackRoleId = input.eventSpec?.roles?.[0]?.id || "participant";
     // Dry-run discovery of photo box from draft template
     const dryCard = renderCard({
       skeleton: input.draft.skeleton,
       blocks: input.draft.blocks,
       theme: input.draft.theme,
       look: input.draft.look,
-      person: { id: "dry-run", name: "Dry Run", roleId: "participant" },
+      person: { id: "dry-run", name: "Dry Run", roleId: fallbackRoleId },
       brand: input.brand,
       fonts: input.fonts,
       event: input.eventSpec,

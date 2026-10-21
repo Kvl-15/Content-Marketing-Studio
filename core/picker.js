@@ -275,7 +275,7 @@ export function createDefaultRunStress({
   skeletons = {},
   blocks = {},
   themes = {},
-  stressSet: dataset = stressSet,
+  stressSet: customStressSet,
 } = {}) {
   return function defaultRunStress(look, spec) {
     if (!font) {
@@ -284,6 +284,24 @@ export function createDefaultRunStress({
     const skeleton = skeletons[look.skeleton];
     const theme = themes[look.theme];
     const errors = [];
+    const specRoles = Array.isArray(spec?.roles) && spec.roles.length > 0
+      ? spec.roles
+      : (Array.isArray(spec?.event?.roles) && spec.event.roles.length > 0 ? spec.event.roles : []);
+
+    let dataset = customStressSet;
+    if (!dataset) {
+      if (specRoles.length > 0) {
+        const primaryRole = specRoles[0].id;
+        const secondaryRole = specRoles[1]?.id || primaryRole;
+        dataset = stressSet.map((person) => {
+          if (specRoles.some((r) => r.id === person.roleId)) return person;
+          const roleId = person.roleId === "organizer" ? secondaryRole : primaryRole;
+          return { ...person, roleId };
+        });
+      } else {
+        dataset = stressSet;
+      }
+    }
 
     for (const person of dataset) {
       const res = renderCard({
@@ -299,7 +317,7 @@ export function createDefaultRunStress({
       });
       const cardErrors = (res.issues || []).filter((i) => i.severity === "error");
       if (cardErrors.length > 0) {
-        errors.push(...cardErrors);
+        errors.push(...cardErrors.map((i) => ({ ...i, source: "stress-set" })));
       }
     }
     return { ok: errors.length === 0, errors };

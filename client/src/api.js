@@ -413,3 +413,161 @@ export async function uploadProjectPhotos(projectId, zipData) {
   };
   throw new ApiError(err.code, err.message, err.issues);
 }
+
+/**
+ * ID Card Design Generation: Compose drafts for a project (POST /projects/:id/drafts).
+ *
+ * @param {string} projectId
+ * @param {{ count?: number; seed?: string | number }} [options]
+ * @returns {Promise<{ drafts: any[]; seed: string | number; issues: any[] }>}
+ */
+export async function composeProjectDrafts(projectId, options = {}) {
+  const { ok, status, data } = await postJson(
+    `/projects/${encodeURIComponent(projectId)}/drafts`,
+    options
+  );
+
+  if (ok && data?.drafts) {
+    return data;
+  }
+
+  const err = data?.error || {
+    code: status === 422 ? "NO_VALID_DRAFT" : "DRAFTS_FAILED",
+    message: `Failed to compose design drafts (HTTP ${status}).`,
+  };
+  throw new ApiError(err.code, err.message, err.issues);
+}
+
+/**
+ * Version Snapshotting: Save chosen draft and dataset into an immutable version (POST /projects/:id/versions).
+ *
+ * @param {string} projectId
+ * @param {{ draftIndex: number; note?: string }} params
+ * @returns {Promise<{
+ *   versionNumber: number;
+ *   draftIndex: number;
+ *   draft: any;
+ *   peopleCount: number;
+ *   timestamp: string;
+ *   note?: string;
+ * }>}
+ */
+export async function saveProjectVersion(projectId, { draftIndex, note }) {
+  const { ok, status, data } = await postJson(
+    `/projects/${encodeURIComponent(projectId)}/versions`,
+    { draftIndex, ...(note ? { note } : {}) }
+  );
+
+  if (ok) {
+    return data;
+  }
+
+  const err = data?.error || {
+    code: "VERSION_FAILED",
+    message: `Failed to save project version (HTTP ${status}).`,
+  };
+  throw new ApiError(err.code, err.message, err.issues);
+}
+
+/**
+ * List saved versions for a project (GET /projects/:id/versions).
+ *
+ * @param {string} projectId
+ * @returns {Promise<Array<any>>}
+ */
+export async function listProjectVersions(projectId) {
+  const { ok, status, data } = await getJson(
+    `/projects/${encodeURIComponent(projectId)}/versions`
+  );
+
+  if (ok) {
+    return Array.isArray(data) ? data : [];
+  }
+
+  const err = data?.error || {
+    code: "VERSIONS_FETCH_FAILED",
+    message: `Failed to fetch versions (HTTP ${status}).`,
+  };
+  throw new ApiError(err.code, err.message, err.issues);
+}
+
+/**
+ * Slice 4: Export ID cards, print sheets, or batch ZIP (POST /projects/:id/export).
+ * On HTTP 200: Returns blob, filename, mimeType, and size.
+ * On error: Parses JSON error envelope and throws ApiError with code, message, issues.
+ *
+ * @param {string} projectId
+ * @param {{
+ *   version?: number;
+ *   kind?: "card" | "sheet" | "zip";
+ *   format?: "pdf" | "svg" | "png";
+ *   personId?: string;
+ *   paper?: "A4" | "A3" | "custom";
+ *   printerSafeMm?: number;
+ *   orientation?: "portrait" | "landscape";
+ *   sides?: "front" | "back" | "both";
+ *   acknowledgedWarnings?: boolean;
+ *   dpi?: number;
+ * }} [exportSettings]
+ * @returns {Promise<{ blob: Blob; filename: string; mimeType: string; size: number }>}
+ */
+export async function exportProject(projectId, exportSettings = {}) {
+  const url = `${BASE_URL}/projects/${encodeURIComponent(projectId)}/export`;
+
+  let response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/pdf, application/zip, image/svg+xml, image/png, application/json, */*",
+      },
+      body: JSON.stringify(exportSettings),
+    });
+  } catch {
+    throw new ApiError(
+      "NETWORK_ERROR",
+      `Unable to connect to server at ${BASE_URL}. Ensure the backend is running.`
+    );
+  }
+
+  if (response.ok) {
+    const blob = await response.blob();
+    const disposition = response.headers.get("Content-Disposition");
+    let filename = "export-output";
+    if (disposition) {
+      const match = disposition.match(/filename="?([^";]+)"?/);
+      if (match && match[1]) {
+        filename = match[1];
+      }
+    }
+    const mimeType = response.headers.get("Content-Type") || "application/octet-stream";
+    return {
+      blob,
+      filename,
+      mimeType,
+      size: blob.size,
+    };
+  }
+
+  // Handle errors (400, 404, 409, 422, 500)
+  let errorJson = null;
+  try {
+    errorJson = await response.json();
+  } catch {
+    // Non-JSON error
+  }
+
+  const errData = errorJson?.error || {
+    code:
+      response.status === 409
+        ? "EXPORT_IN_PROGRESS"
+        : response.status === 422
+          ? "PREFLIGHT_FAILED"
+          : "EXPORT_FAILED",
+    message: `Export failed (HTTP ${response.status}).`,
+    issues: [],
+  };
+
+  throw new ApiError(errData.code, errData.message, errData.issues);
+}

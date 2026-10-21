@@ -218,4 +218,39 @@ describe("dataset integration", () => {
     expect(result.report.totals.rows).toBe(235);
     expect(result.report.unmatchedPhotoFiles).toEqual([]);
   });
+
+  it("imports CSV with exact role IDs 'participants' and 'mentors' without singularization or corruption", async () => {
+    const customRoleSpec = {
+      roles: [
+        { id: "participants", label: "Participants" },
+        { id: "mentors", label: "Mentors" },
+      ],
+    };
+    const csv = "name,role,organization\nAlice Smith,participants,ACM\nBob Jones,mentors,ACM Surat\n";
+    const proposal = mappingProposal(["name", "role", "organization"]);
+    const result = await buildDataset(csv, { eventSpec: customRoleSpec, mapping: proposal.mapping, eventCode: "HX26" });
+
+    expect(result.people).toHaveLength(2);
+    expect(result.people[0].roleId).toBe("participants");
+    expect(result.people[1].roleId).toBe("mentors");
+    expect(result.report.totals.errors).toBe(0);
+    expect(result.report.totals.rows).toBe(2);
+  });
+
+  it("rejects genuinely unknown role IDs in CSV import and does not silently convert them", async () => {
+    const customRoleSpec = {
+      roles: [
+        { id: "participants", label: "Participants" },
+        { id: "mentors", label: "Mentors" },
+      ],
+    };
+    const csv = "name,role,organization\nCarol Boss,boss,ACM\n";
+    const proposal = mappingProposal(["name", "role", "organization"]);
+    const result = await buildDataset(csv, { eventSpec: customRoleSpec, mapping: proposal.mapping, eventCode: "HX26" });
+
+    expect(result.people).toHaveLength(0);
+    expect(result.report.totals.errors).toBe(1);
+    const roleErrors = result.report.rows[0].issues.filter((i) => i.code === "UNKNOWN_ROLE_ID");
+    expect(roleErrors.length).toBeGreaterThan(0);
+  });
 });

@@ -73,8 +73,10 @@ export function createPhotosRouter() {
         // Update matched people in storage
         const matchedMap = new Map();
         for (const match of photoSet.matches) {
-          if (match.id) {
-            matchedMap.set(match.id, `${match.id}.jpg`);
+          const personId = match.row?.id || match.id;
+          if (personId) {
+            const safeName = String(personId).replace(/[^A-Za-z0-9._-]/g, "_");
+            matchedMap.set(personId, `${safeName}.jpg`);
           }
         }
 
@@ -99,6 +101,7 @@ export function createPhotosRouter() {
           unmatchedFiles: photoSet.unmatchedFiles,
           unmatchedRows: photoSet.unmatchedRows,
           warnings: photoSet.warnings,
+          ignoredFiles: photoSet.ignoredFiles || [],
         });
       } catch (err) {
         next(err);

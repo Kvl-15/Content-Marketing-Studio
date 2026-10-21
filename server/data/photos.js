@@ -25,7 +25,8 @@ export function safeZipPath(name) {
   const parts = value.split("/");
   if (parts.some((part) => part === "..")) return null;
   const clean = parts.filter((part) => part && part !== ".");
-  return clean.length ? clean.join("/") : null;
+  const isDirectory = value.endsWith("/");
+  return clean.length ? clean.join("/") + (isDirectory ? "/" : "") : null;
 }
 
 /** @param {Buffer} data */
@@ -87,7 +88,15 @@ export function imageInfo(input) {
 
 /** @param {Buffer|Uint8Array} input @param {number} [maxPixels] */
 export function assertImagePixels(input, maxPixels = DATA_LIMITS.maxImagePixels) {
-  const info = imageInfo(input);
+  const data = Buffer.from(input);
+  if (
+    data.length >= 16 &&
+    data.subarray(0, 8).toString("hex") === "89504e470d0a1a0a" &&
+    data.subarray(12, 16).toString("ascii") === "CgBI"
+  ) {
+    throw new Error("Apple CgBI-compressed PNG photos are not supported; convert to standard PNG or JPEG");
+  }
+  const info = imageInfo(data);
   if (!info) throw new Error("unsupported or corrupt image");
   if (info.width * info.height > maxPixels) throw new Error(`image exceeds ${maxPixels} pixel limit`);
   return info;
@@ -278,6 +287,20 @@ export async function ingestPhotoZip(input, options = {}) {
           continue;
         }
         if (/\/$/u.test(path)) continue;
+        const filename = path.split("/").pop() || path;
+        if (
+          filename.startsWith(".") ||
+          path.startsWith("__MACOSX/") ||
+          filename.toLowerCase() === "thumbs.db" ||
+          filename.toLowerCase() === "desktop.ini"
+        ) {
+          continue;
+        }
+        if (/\.(?:txt|md|nfo)$/iu.test(path)) {
+          result.ignoredFiles = result.ignoredFiles || [];
+          result.ignoredFiles.push({ file: path, reason: "Harmless non-image text file" });
+          continue;
+        }
         if (!/\.(?:jpe?g|png|webp)$/iu.test(path)) {
           result.warnings.push({ code: "UNSUPPORTED_PHOTO_FORMAT", file: path, message: "Only JPEG, PNG, and WebP photos are supported" });
           continue;
@@ -289,7 +312,14 @@ export async function ingestPhotoZip(input, options = {}) {
         try {
           const read = await readEntryBytes(opened.zipfile, entry, limits, totalBytes);
           totalBytes += read.uncompressedBytes;
-          const info = imageInfo(read.bytes);
+          if (
+            read.bytes.length >= 16 &&
+            read.bytes.subarray(0, 8).toString("hex") === "89504e470d0a1a0a" &&
+            read.bytes.subarray(12, 16).toString("ascii") === "CgBI"
+          ) {
+            throw new Error("Apple CgBI-compressed PNG photos are not supported; convert to standard PNG or JPEG");
+          }
+        const info = imageInfo(read.bytes);
           if (!info) throw new Error("unsupported or corrupt image");
           if (info.width * info.height > limits.maxPixels) throw new Error(`image exceeds ${limits.maxPixels} pixel limit`);
           result.photos.push({ filename: path.split("/").pop() ?? path, path, buffer: read.bytes, ...info });
@@ -420,6 +450,20 @@ export async function processPhotoZip(input, rows, options) {
       const path = safeZipPath(entryName);
       if (!path) { result.warnings.push({ code: "ZIP_PATH_TRAVERSAL", file: entryName, message: "Unsafe ZIP path" }); continue; }
       if (/\/$/u.test(path)) continue;
+      const filename = path.split("/").pop() || path;
+      if (
+        filename.startsWith(".") ||
+        path.startsWith("__MACOSX/") ||
+        filename.toLowerCase() === "thumbs.db" ||
+        filename.toLowerCase() === "desktop.ini"
+      ) {
+        continue;
+      }
+      if (/\.(?:txt|md|nfo)$/iu.test(path)) {
+        result.ignoredFiles = result.ignoredFiles || [];
+        result.ignoredFiles.push({ file: path, reason: "Harmless non-image text file" });
+        continue;
+      }
       if (!/\.(?:jpe?g|png|webp)$/iu.test(path)) {
         result.warnings.push({ code: "UNSUPPORTED_PHOTO_FORMAT", file: path, message: "Only JPEG, PNG, and WebP photos are supported" });
         continue;
@@ -447,6 +491,13 @@ export async function processPhotoZip(input, rows, options) {
       }
       const rowIndex = rowIndices[0];
       try {
+        if (
+          read.bytes.length >= 16 &&
+          read.bytes.subarray(0, 8).toString("hex") === "89504e470d0a1a0a" &&
+          read.bytes.subarray(12, 16).toString("ascii") === "CgBI"
+        ) {
+          throw new Error("Apple CgBI-compressed PNG photos are not supported; convert to standard PNG or JPEG");
+        }
         const info = imageInfo(read.bytes);
         if (!info) throw new Error("unsupported or corrupt image");
         if (info.width * info.height > limits.maxPixels) throw new PhotoLimitError("PHOTO_PIXEL_LIMIT", `image exceeds ${limits.maxPixels} pixel limit`);

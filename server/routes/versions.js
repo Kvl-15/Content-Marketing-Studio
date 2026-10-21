@@ -102,7 +102,7 @@ export function createVersionsRouter() {
         });
       }
 
-      res.json((project.versions || []).map(toPublicVersion));
+      res.json((project.versions || []).map((v) => toPublicVersion(v, project.people)));
     } catch (err) {
       next(err);
     }

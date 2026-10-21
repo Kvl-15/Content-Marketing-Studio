@@ -5,6 +5,7 @@ import {
   ProjectIdSchema,
   deriveEventCode,
   deleteProjectPhotoDir,
+  sanitizeSyntheticRoleIssues,
 } from "./schemas.js";
 
 const VersionMongoSchema = new mongoose.Schema(
@@ -96,7 +97,6 @@ export async function createMongoStorage(uri) {
       const safeId = ProjectIdSchema.parse(id);
       const doc = await ProjectModel.findOne({ id: safeId }).lean();
       if (!doc) return null;
-      // Never trust DB shape: parse with Zod
       return ProjectSchema.parse(doc);
     },
 
@@ -145,9 +145,17 @@ export async function createMongoStorage(uri) {
       const doc = await ProjectModel.findOne({ id: safeId });
       if (!doc) return null;
 
-      doc.currentDrafts = drafts;
+      const cleanIssues = sanitizeSyntheticRoleIssues(issues || [], doc.people);
+      const cleanDrafts = Array.isArray(drafts)
+        ? drafts.map((d) => ({
+            ...d,
+            issues: sanitizeSyntheticRoleIssues(d.issues || [], doc.people),
+          }))
+        : drafts;
+
+      doc.currentDrafts = cleanDrafts;
       doc.draftSeed = seed;
-      doc.draftIssues = issues || [];
+      doc.draftIssues = cleanIssues;
       doc.updatedAt = new Date().toISOString();
 
       await doc.save();
@@ -164,11 +172,21 @@ export async function createMongoStorage(uri) {
         throw new Error(`Draft index ${draftIndex} not found in project ${id}`);
       }
 
+      const rawDraft = doc.currentDrafts[draftIndex];
+      const draft =
+        typeof rawDraft.toObject === "function"
+          ? rawDraft.toObject()
+          : JSON.parse(JSON.stringify(rawDraft));
+
+      if (Array.isArray(draft.issues)) {
+        draft.issues = sanitizeSyntheticRoleIssues(draft.issues, doc.people);
+      }
+
       const versionNumber = (doc.versions?.length || 0) + 1;
       const newVersion = {
         versionNumber,
         draftIndex,
-        draft: doc.currentDrafts[draftIndex],
+        draft,
         people: doc.people || [],
         timestamp: new Date().toISOString(),
         ...(note ? { note } : {}),

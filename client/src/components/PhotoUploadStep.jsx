@@ -241,9 +241,9 @@ export function PhotoUploadStep({ project, hasDataset, onPhotosUploaded, onError
                   <tbody>
                     {matchingResults.matches.map((m, idx) => (
                       <tr key={idx}>
-                        <td>Line {m.rowNumber ?? "—"}</td>
+                        <td>Line {m.rowNumber ?? (m.rowIndex !== undefined ? m.rowIndex + 1 : "—")}</td>
                         <td>
-                          <code>{m.id || "—"}</code>
+                          <code>{m.row?.id || m.id || "—"}</code>
                         </td>
                         <td>
                           <code>{m.file || "—"}</code>
@@ -289,6 +289,28 @@ export function PhotoUploadStep({ project, hasDataset, onPhotosUploaded, onError
                       {w.code || "PHOTO_WARNING"}
                     </span>
                     <span className="issue-msg">{w.message || JSON.stringify(w)}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Ignored Non-Image Files Notes */}
+          {matchingResults.ignoredFiles && matchingResults.ignoredFiles.length > 0 && (
+            <div className="report-section">
+              <h5 className="sub-section-title text-muted">
+                Ignored Non-Image Files ({matchingResults.ignoredFiles.length})
+              </h5>
+              <p className="text-muted text-sm">
+                Harmless text and documentation files skipped during image processing:
+              </p>
+              <ul className="row-issues-list">
+                {matchingResults.ignoredFiles.map((item, idx) => (
+                  <li key={idx} className="issue-item">
+                    <span className="badge badge-subtle">{item.file}</span>
+                    <span className="text-muted text-sm" style={{ marginLeft: "8px" }}>
+                      {item.reason}
+                    </span>
                   </li>
                 ))}
               </ul>

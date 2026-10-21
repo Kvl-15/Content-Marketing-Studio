@@ -51,7 +51,8 @@ objects exactly:
     "PHOTO_LOW_RES" | "NO_PHOTO" | "EVENT_NAME_DOES_NOT_FIT" |
     "UNKNOWN_ROLE_ID" | "ELEMENT_DROPPED",
   nodeId?: string,
-  message: string
+  message: string,
+  source?: "stress-set" | string
 }
 ```
 
@@ -391,7 +392,7 @@ Every endpoint uses the common error envelope: `{ error: { code, message, issues
     "eventCode": "NSH26" /* optional: 2-8 uppercase alphanumeric, derived if omitted */
   }
   ```
-- **Response body (201):** Project document with `peopleCount` (`id`, `name`, `eventCode`, `eventSpec`, `datasetReport: null`, `peopleCount: 0`, `currentDrafts: null`, `versions: []`, `createdAt`, `updatedAt`).
+- **Response body (201):** Project document with `peopleCount` and `photoCount` (`id`, `name`, `eventCode`, `eventSpec`, `datasetReport: null`, `peopleCount: 0`, `photoCount: 0`, `currentDrafts: null`, `versions: []`, `createdAt`, `updatedAt`).
 - **Possible errors:** 400 `INVALID_REQUEST` / `INVALID_EVENT_SPEC`.
 
 #### `GET /projects` — list projects (REAL)
@@ -400,12 +401,12 @@ Every endpoint uses the common error envelope: `{ error: { code, message, issues
 
 #### `GET /projects/:id` — get one project (REAL)
 - **Request:** none.
-- **Response body (200):** Project document with `peopleCount` (personal data privacy: no `people` array).
+- **Response body (200):** Project document with `peopleCount` and `photoCount` (personal data privacy: no `people` array).
 - **Possible errors:** 400 `INVALID_PROJECT_ID`, 404 `NOT_FOUND`.
 
 #### `PUT /projects/:id` — update project metadata (REAL)
 - **Request body:** `{ "name"?: string, "eventCode"?: string }`
-- **Response body (200):** Updated project document with `peopleCount` (no `people` array).
+- **Response body (200):** Updated project document with `peopleCount` and `photoCount` (no `people` array).
 - **Possible errors:** 400 `INVALID_PROJECT_ID` / `INVALID_REQUEST`, 404 `NOT_FOUND`.
 
 #### `PUT /projects/:id/event-spec` — update EventSpec (REAL)
@@ -431,7 +432,7 @@ Every endpoint uses the common error envelope: `{ error: { code, message, issues
 #### `POST /projects/:id/photos` — upload photo ZIP archive (REAL)
 - **Request:** Raw bytes (ZIP archive) via `express.raw({ limit: 300MB })`.
 - **Processing:** Streams ZIP, normalizes JPEG/PNG/WebP photos to disk under `os.tmpdir()/acm-studio/<projectId>/`, matches photos to participant rows, updates stored people records.
-- **Response body (200):** `{ matches: MatchedPhoto[], unmatchedFiles: string[], unmatchedRows: number[], warnings: any[] }`.
+- **Response body (200):** `{ matches: MatchedPhoto[], unmatchedFiles: string[], unmatchedRows: number[], warnings: any[], ignoredFiles?: { file: string, reason: string }[] }`.
 - **Possible errors:** 400 `NO_DATASET` / `EMPTY_BODY`, 404 `NOT_FOUND`, 413 `PAYLOAD_TOO_LARGE`.
 
 ### 4.4 Drafts
@@ -447,12 +448,12 @@ Every endpoint uses the common error envelope: `{ error: { code, message, issues
 #### `POST /projects/:id/versions` — snapshot immutable version (REAL)
 - **Request body:** `{ "draftIndex": 0 | 1 | 2, "note"?: string }`.
 - **Processing:** Snapshots the chosen composed draft and current cleaned participant rows into immutable version N.
-- **Response body (201):** `{ "versionNumber": number, "draftIndex": number, "draft": any, "peopleCount": number, "timestamp": string, "note"?: string }`. (Participant personal data is never returned; `peopleCount` indicates total participants in snapshot).
+- **Response body (201):** `{ "versionNumber": number, "draftIndex": number, "draft": any, "peopleCount": number, "photoCount": number, "timestamp": string, "note"?: string }`. (Participant personal data is never returned; `peopleCount` indicates total participants in snapshot, `photoCount` indicates attendees with a valid attached photo).
 - **Possible errors:** 400 `NO_DRAFTS` / `NO_DATASET` / `INVALID_REQUEST`, 404 `NOT_FOUND`.
 
 #### `GET /projects/:id/versions` — list saved versions (REAL)
 - **Request:** none.
-- **Response body (200):** Array of saved version objects (each with `peopleCount` instead of `people`).
+- **Response body (200):** Array of saved version objects (each with `peopleCount` and `photoCount` instead of `people`).
 - **Possible errors:** 400 `INVALID_PROJECT_ID`, 404 `NOT_FOUND`.
 
 ### 4.6 Export
@@ -569,7 +570,7 @@ The 4 intake endpoints are: `POST /intake/parse`, `POST /intake/questions`, `POS
 ## 5. Storage & Privacy Architecture (REAL)
 
 1. **Storage Models**: Defined with Zod in `server/storage/schemas.js` (`ProjectSchema`, `VersionSchema`, `StoredPersonSchema`).
-2. **Personal Data Privacy**: Names, emails, and photos are personal data. They are stored in MongoDB/memory strictly for card export execution, but NEVER logged, NEVER included in error bodies, and NEVER returned to the client in project or version responses (all client responses return `peopleCount` instead of `people` arrays; dataset upload returns `{ report }` only).
+2. **Personal Data Privacy**: Names, emails, and photos are personal data. They are stored in MongoDB/memory strictly for card export execution, but NEVER logged, NEVER included in error bodies, and NEVER returned to the client in project or version responses (all client responses return `peopleCount` and `photoCount` integer metrics instead of `people` arrays; dataset upload returns `{ report }` only).
 3. **Photo Storage**: Photos are kept on disk under `os.tmpdir()/acm-studio/<projectId>/` and streamed on demand via `photoSource`. Deleting a project deletes its disk photo folder.
 4. **CORS**: Zero external packages. Hand-rolled middleware in `server/cors.js` whitelist-restricts origins to `http://localhost:5173`, `http://localhost:3000`, and `ALLOWED_ORIGINS`.
 

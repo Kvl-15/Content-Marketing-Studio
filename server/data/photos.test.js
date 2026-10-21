@@ -9,6 +9,8 @@ import {
   matchPhotosToRows,
   processPhoto,
   safeZipPath,
+  assertImagePixels,
+  processPhotoZip,
 } from "./photos.js";
 
 function png(width, height) {
@@ -92,6 +94,26 @@ describe("photo ZIP ingestion", () => {
     expect(result.warnings.every((item) => item.code === "PHOTO_UNSUPPORTED_OR_CORRUPT")).toBe(true);
   });
 
+  it("rejects invalid or non-ZIP buffer with ZIP_CORRUPT warning", async () => {
+    const result = await ingestPhotoZip(Buffer.from("Not A Valid ZIP File Contents"));
+    expect(result.photos).toHaveLength(0);
+    expect(result.warnings.some((w) => w.code === "ZIP_CORRUPT")).toBe(true);
+  });
+
+  it("accepts PNG with generic or empty MIME via magic bytes", async () => {
+    const sharp = (await import("sharp")).default;
+    const validPng = await sharp({
+      create: { width: 10, height: 10, channels: 3, background: { r: 10, g: 20, b: 30 } },
+    }).png().toBuffer();
+
+    const info = imageInfo(validPng);
+    expect(info).toMatchObject({ format: "png", width: 10, height: 10 });
+
+    const processed = await processPhoto(validPng);
+    expect(processed.mimeType).toBe("image/jpeg");
+    expect(processed.source.format).toBe("png");
+  });
+
   it("bounds a 300-entry archive with configurable small limits", async () => {
     const entries = Array.from({ length: 300 }, (_, index) => ({ name: `photo-${index}.png`, data: png(1, 1) }));
     const result = await ingestPhotoZip(zip(entries), { maxEntries: 3, maxEntryBytes: 33, maxEntryCompressedBytes: 33, maxTotalBytes: 99 });
@@ -143,4 +165,140 @@ describe("photo geometry and matching", () => {
 
 describe("ZIP path safety", () => {
   it.each(["../x.jpg", "/x.jpg", "C:/x.jpg", "foo/../../x.jpg"])("rejects %s", (path) => expect(safeZipPath(path)).toBeNull());
+});
+
+describe("ZIP photo ingestion edge cases and format detection", () => {
+  function cgbi(width, height) {
+    const out = Buffer.alloc(37);
+    Buffer.from("89504e470d0a1a0a", "hex").copy(out, 0);
+    out.writeUInt32BE(4, 8);
+    out.write("CgBI", 12, "ascii");
+    out.writeUInt32BE(0, 16);
+    out.writeUInt32BE(13, 20);
+    out.write("IHDR", 24, "ascii");
+    out.writeUInt32BE(width, 28);
+    out.writeUInt32BE(height, 32);
+    return out;
+  }
+
+  it("rejects Apple CgBI-compressed PNG photos with an explicit error message", async () => {
+    expect(() => assertImagePixels(cgbi(10, 10))).toThrow(
+      "Apple CgBI-compressed PNG photos are not supported; convert to standard PNG or JPEG"
+    );
+
+    const result = await ingestPhotoZip(zip([
+      { name: "apple.png", data: cgbi(10, 10) },
+    ]));
+    expect(result.photos).toHaveLength(0);
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0].message).toContain(
+      "Apple CgBI-compressed PNG photos are not supported; convert to standard PNG or JPEG"
+    );
+  });
+
+  it("ignores harmless text files (.txt, .md, .nfo) in ignoredFiles and skips directory entries & OS metadata without warnings", async () => {
+    const archive = zip([
+      { name: "photos/", data: Buffer.alloc(0) },
+      { name: "photos/__MACOSX/._photo1.png", data: Buffer.from("metadata") },
+      { name: "photos/.DS_Store", data: Buffer.from("desktop store") },
+      { name: "photos/Thumbs.db", data: Buffer.from("thumbs") },
+      { name: "photos/desktop.ini", data: Buffer.from("desktop ini") },
+      { name: "photos/README.txt", data: Buffer.from("Photo archive instructions") },
+      { name: "photos/NOTES.md", data: Buffer.from("Attendee photo notes") },
+      { name: "photos/info.nfo", data: Buffer.from("Release info") },
+      { name: "photos/valid.png", data: png(20, 20), compress: true },
+    ]);
+
+    const result = await ingestPhotoZip(archive);
+    expect(result.photos).toHaveLength(1);
+    expect(result.photos[0].filename).toBe("valid.png");
+    expect(result.warnings).toHaveLength(0);
+    expect(result.ignoredFiles).toEqual([
+      { file: "photos/README.txt", reason: "Harmless non-image text file" },
+      { file: "photos/NOTES.md", reason: "Harmless non-image text file" },
+      { file: "photos/info.nfo", reason: "Harmless non-image text file" },
+    ]);
+  });
+
+  it("reports unknown non-supported file formats (e.g. .bmp, .gif) as UNSUPPORTED_PHOTO_FORMAT", async () => {
+    const archive = zip([
+      { name: "logo.bmp", data: Buffer.from("BM dummy bitmap content") },
+      { name: "badge.gif", data: Buffer.from("GIF89a dummy gif content") },
+    ]);
+
+    const result = await ingestPhotoZip(archive);
+    expect(result.photos).toHaveLength(0);
+    expect(result.warnings).toHaveLength(2);
+    expect(result.warnings.every((w) => w.code === "UNSUPPORTED_PHOTO_FORMAT")).toBe(true);
+  });
+
+  it("detects content by magic bytes, not extension (PNG named .png containing JPEG accepted; .png containing garbage rejected)", async () => {
+    const jpegContent = jpeg(40, 30);
+    const disguisedArchive = zip([
+      { name: "disguised.png", data: jpegContent, compress: true },
+      { name: "garbage.png", data: Buffer.from("corrupt-not-an-image"), compress: true },
+    ]);
+
+    const result = await ingestPhotoZip(disguisedArchive);
+    expect(result.photos).toHaveLength(1);
+    expect(result.photos[0].filename).toBe("disguised.png");
+    expect(result.photos[0].format).toBe("jpeg");
+    expect(result.photos[0].width).toBe(40);
+    expect(result.photos[0].height).toBe(30);
+
+    const garbageWarn = result.warnings.find((w) => w.file === "garbage.png");
+    expect(garbageWarn).toBeDefined();
+    expect(garbageWarn?.code).toBe("PHOTO_UNSUPPORTED_OR_CORRUPT");
+  });
+
+  it("tests 215 people and 216 photos: exactly 215 matched, 1 unmatched file, 0 unmatched rows, and 215 photos written", async () => {
+    const sharp = (await import("sharp")).default;
+    const validPng = await sharp({
+      create: { width: 10, height: 10, channels: 3, background: { r: 100, g: 150, b: 200 } },
+    }).png().toBuffer();
+
+    const rows = Array.from({ length: 215 }, (_, i) => ({
+      id: `attendee_${String(i + 1).padStart(3, "0")}`,
+      name: `Attendee ${i + 1}`,
+      role: "participant",
+    }));
+
+    const entries = Array.from({ length: 216 }, (_, i) => ({
+      name: `attendee_${String(i + 1).padStart(3, "0")}.png`,
+      data: validPng,
+      compress: false,
+    }));
+    entries.push({
+      name: "README.txt",
+      data: Buffer.from("Instructions for photo upload"),
+      compress: false,
+    });
+
+    const archive = zip(entries);
+    const writtenPhotos = [];
+
+    const result = await processPhotoZip(archive, rows, {
+      outputDir: "/mock/photo/dir",
+      writePhoto: async (row, processed) => {
+        writtenPhotos.push({ rowId: row.id, width: processed.width, height: processed.height });
+        return `/mock/photo/dir/${row.id}.jpg`;
+      },
+    });
+
+    expect(result.matches).toHaveLength(215);
+    expect(result.unmatchedRows).toHaveLength(0);
+    expect(result.unmatchedFiles).toHaveLength(1);
+    expect(result.unmatchedFiles[0]).toBe("attendee_216.png");
+    expect(writtenPhotos).toHaveLength(215);
+    expect(result.ignoredFiles).toEqual([
+      { file: "README.txt", reason: "Harmless non-image text file" },
+    ]);
+    expect(result.warnings).toHaveLength(0);
+
+    expect(result.matches[0].row.id).toBe("attendee_001");
+    expect(result.matches[0].file).toBe("attendee_001.png");
+    expect(result.matches[214].row.id).toBe("attendee_215");
+    expect(result.matches[214].file).toBe("attendee_215.png");
+  }, 30000);
+  /* end test */
 });

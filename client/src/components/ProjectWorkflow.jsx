@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef } from "react";
 import { DataUploadStep } from "./DataUploadStep.jsx";
 import { A2ReportView } from "./A2ReportView.jsx";
 import { PhotoUploadStep } from "./PhotoUploadStep.jsx";
+import { DesignPreviewStep } from "./DesignPreviewStep.jsx";
+import { ExportWorkflowStep } from "./ExportWorkflowStep.jsx";
 
 /**
  * Calculates count of valid attendees from an A2 report.
@@ -57,6 +59,8 @@ export function ProjectWorkflow({
 
   const reportRef = useRef(null);
   const photoRef = useRef(null);
+  const designRef = useRef(null);
+  const exportRef = useRef(null);
 
   // Scroll reset to top upon mounting or project change (React effect, not during render)
   useEffect(() => {
@@ -149,13 +153,31 @@ export function ProjectWorkflow({
             </button>
           )}
           {hasDataset && (
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm"
-              onClick={() => photoRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
-            >
-              &darr; Jump to Photos
-            </button>
+            <>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={() => photoRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
+              >
+                &darr; Jump to Photos
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={() => designRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
+              >
+                &darr; Jump to Designs
+              </button>
+              {project.versions?.length > 0 && (
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => exportRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
+                >
+                  &darr; Jump to Export
+                </button>
+              )}
+            </>
           )}
           <button
             type="button"
@@ -192,6 +214,50 @@ export function ProjectWorkflow({
                 ? `✓ ${project.photoMatchesCount} Matched`
                 : "Ready (Optional)"
               : "🔒 Upload Data First"}
+          </span>
+        </div>
+
+        <div className="phase-divider" />
+
+        <div
+          className={`phase-pill ${
+            hasDataset
+              ? project.versions?.length > 0
+                ? "completed"
+                : project.currentDrafts?.length > 0
+                ? "active"
+                : "active"
+              : "gated"
+          }`}
+        >
+          <span className="phase-num">Step 3</span>
+          <span className="phase-label">Design &amp; Preview</span>
+          <span className="phase-status">
+            {hasDataset
+              ? project.versions?.length > 0
+                ? `✓ Version ${project.versions[project.versions.length - 1].versionNumber} Selected`
+                : project.currentDrafts?.length > 0
+                ? `${project.currentDrafts.length} Designs Ready`
+                : "Ready to Generate"
+              : "🔒 Upload Data First"}
+          </span>
+        </div>
+
+        <div className="phase-divider" />
+
+        <div
+          className={`phase-pill ${
+            hasDataset && project.versions?.length > 0
+              ? "active"
+              : "gated"
+          }`}
+        >
+          <span className="phase-num">Step 4</span>
+          <span className="phase-label">Review &amp; Export</span>
+          <span className="phase-status">
+            {hasDataset && project.versions?.length > 0
+              ? "Ready to Export"
+              : "🔒 Select Design First"}
           </span>
         </div>
       </div>
@@ -287,6 +353,50 @@ export function ProjectWorkflow({
           project={project}
           hasDataset={hasDataset}
           onPhotosUploaded={handlePhotosUploaded}
+          onError={onError}
+        />
+
+        {hasDataset && (
+          <div className="step-bottom-nav" style={{ marginTop: "1.25rem", display: "flex", justifyContent: "flex-end" }}>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => designRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
+            >
+              Continue to Step 3: Card Designs &darr;
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* 4. ID Card Design Generation & Preview Step */}
+      <div ref={designRef} className="design-step-wrapper">
+        <DesignPreviewStep
+          project={project}
+          hasDataset={hasDataset}
+          onProjectUpdated={onProjectUpdated}
+          onError={onError}
+        />
+
+        {project.versions?.length > 0 && (
+          <div className="step-bottom-nav" style={{ marginTop: "1.25rem", display: "flex", justifyContent: "flex-end" }}>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => exportRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
+            >
+              Continue to Step 4: Final Review &amp; Export &darr;
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* 5. Final ID Card Review, Preflight Validation & Export Step */}
+      <div ref={exportRef} className="export-step-wrapper">
+        <ExportWorkflowStep
+          project={project}
+          hasDataset={hasDataset}
+          onGoToDesignStep={() => designRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
           onError={onError}
         />
       </div>

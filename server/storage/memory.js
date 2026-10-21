@@ -4,6 +4,7 @@ import {
   ProjectIdSchema,
   deriveEventCode,
   deleteProjectPhotoDir,
+  sanitizeSyntheticRoleIssues,
 } from "./schemas.js";
 
 /**
@@ -108,11 +109,19 @@ export function createMemoryStorage() {
       const existing = projects.get(safeId);
       if (!existing) return null;
 
+      const cleanIssues = sanitizeSyntheticRoleIssues(issues || [], existing.people);
+      const cleanDrafts = Array.isArray(drafts)
+        ? drafts.map((d) => ({
+            ...d,
+            issues: sanitizeSyntheticRoleIssues(d.issues || [], existing.people),
+          }))
+        : drafts;
+
       const updated = {
         ...existing,
-        currentDrafts: drafts,
+        currentDrafts: cleanDrafts,
         draftSeed: seed,
-        draftIssues: issues || [],
+        draftIssues: cleanIssues,
         updatedAt: new Date().toISOString(),
       };
 
@@ -130,11 +139,16 @@ export function createMemoryStorage() {
         throw new Error(`Draft index ${draftIndex} not found in project ${id}`);
       }
 
+      const draft = structuredClone(existing.currentDrafts[draftIndex]);
+      if (Array.isArray(draft.issues)) {
+        draft.issues = sanitizeSyntheticRoleIssues(draft.issues, existing.people);
+      }
+
       const versionNumber = (existing.versions?.length || 0) + 1;
       const newVersion = {
         versionNumber,
         draftIndex,
-        draft: existing.currentDrafts[draftIndex],
+        draft,
         people: structuredClone(existing.people || []),
         timestamp: new Date().toISOString(),
         ...(note ? { note } : {}),

@@ -57,34 +57,198 @@ export const ProjectSchema = z.object({
 });
 
 /**
+ * Determines whether an issue is a synthetic stress-test role mismatch.
+ *
+ * An issue is treated as synthetic ONLY when ALL of the following hold:
+ * 1. Issue code is UNKNOWN_ROLE_ID.
+ * 2. Person ID matches HX26-S-00[1-8].
+ * 3. Role is "participant" or "organizer".
+ * 4. Person ID does not exist in the project's current attendee data.
+ *
+ * If person ID is "boss", or role is empty, or person ID is a real attendee,
+ * or if the issue comes from any other source, KEEP IT (returns false).
+ *
+ * @param {any} issue
+ * @param {any[]} [currentPeople=[]]
+ * @returns {boolean}
+ */
+export function isSyntheticStressRoleIssue(issue, currentPeople = []) {
+  if (!issue || typeof issue !== "object") return false;
+  if (issue.code !== "UNKNOWN_ROLE_ID") return false;
+
+  // If explicitly tagged with a source other than stress-set, keep it
+  if (issue.source && issue.source !== "stress-set") return false;
+
+  let personId = issue.personId;
+  let roleId = issue.roleId;
+
+  if (!personId || !roleId) {
+    const msg = String(issue.message || "");
+    const match = msg.match(
+      /^Person\s+"([^"]+)"\s+has\s+invalid\s+or\s+unrecognised\s+roleId\s+"([^"]*)";\s+must\s+match\s+an\s+id\s+in\s+event\.roles$/
+    );
+    if (match) {
+      personId = personId || match[1];
+      roleId = roleId || match[2];
+    }
+  }
+
+  // 1. Must have valid personId matching HX26-S-00[1-8]
+  if (!personId || !/^HX26-S-00[1-8]$/.test(personId)) return false;
+
+  // 2. Role must be "participant" or "organizer"
+  if (roleId !== "participant" && roleId !== "organizer") return false;
+
+  // 3. Person ID must not exist in current attendee data
+  const peopleList = Array.isArray(currentPeople) ? currentPeople : [];
+  const existsInPeople = peopleList.some((p) =>
+    typeof p === "string" ? p === personId : p?.id === personId
+  );
+  if (existsInPeople) return false;
+
+  return true;
+}
+
+/**
+ * Sanitizes issues by removing synthetic stress-test role issues matching the 4-point criteria.
+ * Preserves genuine validation issues for real participants (D-09).
+ *
+ * @param {any[]} issues
+ * @param {any[]} [currentPeople=[]]
+ * @returns {any[]}
+ */
+export function sanitizeSyntheticRoleIssues(issues, currentPeople = []) {
+  if (!Array.isArray(issues)) return [];
+  return issues.filter((iss) => !isSyntheticStressRoleIssue(iss, currentPeople));
+}
+
+/**
+ * Recursively inspects and sanitizes a project's draft issues, drafts, and saved versions.
+ * Returns the sanitized project and a flag indicating if mutations occurred.
+ *
+ * @param {any} project
+ * @returns {{ project: any; modified: boolean }}
+ */
+export function sanitizeProjectIssues(project) {
+  if (!project) return { project, modified: false };
+  let modified = false;
+  const currentPeople = Array.isArray(project.people) ? project.people : [];
+
+  if (Array.isArray(project.draftIssues)) {
+    const cleaned = sanitizeSyntheticRoleIssues(project.draftIssues, currentPeople);
+    if (cleaned.length !== project.draftIssues.length) {
+      project.draftIssues = cleaned;
+      modified = true;
+    }
+  }
+
+  if (Array.isArray(project.currentDrafts)) {
+    for (const draft of project.currentDrafts) {
+      if (draft && Array.isArray(draft.issues)) {
+        const cleaned = sanitizeSyntheticRoleIssues(draft.issues, currentPeople);
+        if (cleaned.length !== draft.issues.length) {
+          draft.issues = cleaned;
+          modified = true;
+        }
+      }
+    }
+  }
+
+  if (Array.isArray(project.versions)) {
+    for (const version of project.versions) {
+      if (version?.draft && Array.isArray(version.draft.issues)) {
+        const versionPeople =
+          Array.isArray(version.people) && version.people.length > 0
+            ? version.people
+            : currentPeople;
+        const cleaned = sanitizeSyntheticRoleIssues(version.draft.issues, versionPeople);
+        if (cleaned.length !== version.draft.issues.length) {
+          version.draft.issues = cleaned;
+          modified = true;
+        }
+      }
+    }
+  }
+
+  return { project, modified };
+}
+
+/**
  * Strips personal data (people array) and returns public version representation with peopleCount.
+ * Sanitizes any synthetic stress issues from the version's draft.
  *
  * @param {any} version
+ * @param {any[]} [currentPeople=[]]
  * @returns {any}
  */
-export function toPublicVersion(version) {
+export function toPublicVersion(version, currentPeople = []) {
   if (!version) return version;
-  const { people, ...rest } = version;
+  const { people, draft, ...rest } = version;
+  const peopleList =
+    Array.isArray(people) && people.length > 0 ? people : currentPeople;
+  const publicDraft = draft
+    ? {
+        ...draft,
+        ...(Array.isArray(draft.issues)
+          ? { issues: sanitizeSyntheticRoleIssues(draft.issues, peopleList) }
+          : {}),
+      }
+    : draft;
+
+  const photoCount = Array.isArray(people)
+    ? people.filter((p) => p && typeof p === "object" && typeof p.photo === "string" && p.photo.trim().length > 0).length
+    : 0;
+
   return {
     ...rest,
+    draft: publicDraft,
     peopleCount: Array.isArray(people) ? people.length : 0,
+    photoCount,
   };
 }
 
 /**
  * Strips personal data (people array) and returns public project representation with peopleCount.
- * Also strips people arrays from nested versions if present.
+ * Also strips people arrays from nested versions if present and sanitizes synthetic issues.
  *
  * @param {any} project
  * @returns {any}
  */
 export function toPublicProject(project) {
   if (!project) return project;
-  const { people, versions, ...rest } = project;
+  const { people, versions, currentDrafts, draftIssues, ...rest } = project;
+  const peopleList = Array.isArray(people) ? people : [];
+
+  const publicDrafts = Array.isArray(currentDrafts)
+    ? currentDrafts.map((d) =>
+        d
+          ? {
+              ...d,
+              ...(Array.isArray(d.issues)
+                ? { issues: sanitizeSyntheticRoleIssues(d.issues, peopleList) }
+                : {}),
+            }
+          : d
+      )
+    : currentDrafts;
+
+  const publicDraftIssues = Array.isArray(draftIssues)
+    ? sanitizeSyntheticRoleIssues(draftIssues, peopleList)
+    : draftIssues;
+
+  const photoCount = Array.isArray(people)
+    ? people.filter((p) => p && typeof p === "object" && typeof p.photo === "string" && p.photo.trim().length > 0).length
+    : 0;
+
   return {
     ...rest,
+    currentDrafts: publicDrafts,
+    draftIssues: publicDraftIssues,
     peopleCount: Array.isArray(people) ? people.length : 0,
-    ...(versions ? { versions: versions.map(toPublicVersion) } : {}),
+    photoCount,
+    ...(versions
+      ? { versions: versions.map((v) => toPublicVersion(v, peopleList)) }
+      : {}),
   };
 }
 

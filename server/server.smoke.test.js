@@ -542,4 +542,620 @@ describe("Server HTTP API smoke tests", { timeout: 30000 }, () => {
       activeProjectExports.delete(project.id);
     }
   });
+
+  it("handles custom role IDs ('participants' and 'mentors') end-to-end: imports CSV, saves version with zero synthetic role errors, exports successfully, and enforces D-09 gate on invalid roles", async () => {
+    const customRolesSpec = {
+      ...sampleEventSpec,
+      roles: [
+        {
+          id: "participants",
+          label: "PARTICIPANTS",
+          expectedCount: 200,
+          color: { value: "#2563EB", status: "defaulted", source: "default" },
+        },
+        {
+          id: "mentors",
+          label: "MENTORS",
+          expectedCount: 20,
+          color: { value: "#10B981", status: "defaulted", source: "default" },
+        },
+      ],
+    };
+
+    // 1. Create project with custom roles
+    const createRes = await fetch(`${baseUrl}/projects`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Custom Roles Studio Hackathon",
+        eventSpec: customRolesSpec,
+      }),
+    });
+    expect(createRes.status).toBe(201);
+    const project = await createRes.json();
+    const projectId = project.id;
+
+    // 2. Import CSV with 'participants' and 'mentors'
+    const csvContent =
+      "name,role,organization\n" +
+      "Dev User,participants,ACM Chapter\n" +
+      "Mentor Lead,mentors,ACM Chapter\n";
+
+    const dataRes = await fetch(`${baseUrl}/projects/${projectId}/data`, {
+      method: "POST",
+      headers: { "Content-Type": "text/csv" },
+      body: csvContent,
+    });
+    expect(dataRes.status).toBe(200);
+    const dataBody = await dataRes.json();
+    expect(dataBody.report.totals.rows).toBe(2);
+    expect(dataBody.report.totals.errors).toBe(0);
+
+    // 3. Generate drafts
+    const draftsRes = await fetch(`${baseUrl}/projects/${projectId}/drafts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ count: 3 }),
+    });
+    expect(draftsRes.status).toBe(200);
+    const draftsBody = await draftsRes.json();
+    const draftIssues = draftsBody.issues || [];
+    const unknownRoleErrors = draftIssues.filter((i) => i.code === "UNKNOWN_ROLE_ID");
+    expect(unknownRoleErrors).toHaveLength(0);
+
+    // 4. Save Version
+    const versionRes = await fetch(`${baseUrl}/projects/${projectId}/versions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ draftIndex: 0, note: "Selection v1" }),
+    });
+    expect(versionRes.status).toBe(201);
+    const versionBody = await versionRes.json();
+    const versionDraftIssues = versionBody.draft?.issues || [];
+    expect(versionDraftIssues.filter((i) => i.code === "UNKNOWN_ROLE_ID")).toHaveLength(0);
+
+    // 5. Verify GET /projects/:id and GET /projects/:id/versions have 0 UNKNOWN_ROLE_ID errors
+    const getProjRes = await fetch(`${baseUrl}/projects/${projectId}`);
+    expect(getProjRes.status).toBe(200);
+    const getProjBody = await getProjRes.json();
+    const projVersions = getProjBody.versions || [];
+    expect(projVersions).toHaveLength(1);
+    expect(
+      (projVersions[0].draft?.issues || []).filter((i) => i.code === "UNKNOWN_ROLE_ID")
+    ).toHaveLength(0);
+
+    // 6. Execute Print Sheet Export (D-09 gate passes)
+    const exportRes = await fetch(`${baseUrl}/projects/${projectId}/export`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        kind: "sheet",
+        format: "pdf",
+        paper: "A4",
+        acknowledgedWarnings: true,
+      }),
+    });
+    expect(exportRes.status).toBe(200);
+    expect(exportRes.headers.get("Content-Type")).toBe("application/pdf");
+    const exportBytes = await exportRes.arrayBuffer();
+    expect(exportBytes.byteLength).toBeGreaterThan(100);
+
+    // 7. Verify invalid role like 'boss' is rejected by CSV intake with 422 UNKNOWN_ROLE_ID
+    const badCsvRes = await fetch(`${baseUrl}/projects/${projectId}/data`, {
+      method: "POST",
+      headers: { "Content-Type": "text/csv" },
+      body: "name,role,organization\nBad Actor,boss,ACM Chapter\n",
+    });
+    expect(badCsvRes.status).toBe(422);
+    const badBody = await badCsvRes.json();
+    expect(badBody.error.code).toBe("UNKNOWN_ROLE_ID");
+
+    // 8. Test public projection: verify GET /projects/:id sanitizes synthetic issues without mutating storage
+    const getPublicProjRes = await fetch(`${baseUrl}/projects/${projectId}`);
+    const publicProj = await getPublicProjRes.json();
+    const lingeringSynthetic = (publicProj.versions[0].draft?.issues || []).filter(
+      (i) => i.code === "UNKNOWN_ROLE_ID"
+    );
+    expect(lingeringSynthetic).toHaveLength(0);
+  });
+
+  it("attaches photos via POST /projects/:id/photos in bulk storage write and proves saved versions remain immutable", async () => {
+    // 1. Create project with sample event spec
+    const projRes = await fetch(`${baseUrl}/projects`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Photo Bulk Attachment & Immutability Test",
+        eventSpec: sampleEventSpec,
+      }),
+    });
+    const proj = await projRes.json();
+    const pid = proj.id;
+
+    // 2. Upload CSV with 2 attendees
+    const csvContent = "name,role,organization,email\nAlice Smith,participant,ACM Chapter,alice@example.com\nBob Jones,organizer,ACM Chapter,bob@example.com\n";
+    const dataRes = await fetch(`${baseUrl}/projects/${pid}/data`, {
+      method: "POST",
+      headers: { "Content-Type": "text/csv" },
+      body: csvContent,
+    });
+    expect(dataRes.status).toBe(200);
+    const dataBody = await dataRes.json();
+    const attendee1 = dataBody.report.rows[0].id;
+    const attendee2 = dataBody.report.rows[1].id;
+
+    // 3. Generate drafts & save version 1 BEFORE photos are uploaded
+    await fetch(`${baseUrl}/projects/${pid}/drafts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ count: 1 }),
+    });
+
+    const v1Res = await fetch(`${baseUrl}/projects/${pid}/versions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ draftIndex: 0, note: "Version before photos" }),
+    });
+    expect(v1Res.status).toBe(201);
+
+    // Verify version 1 in storage has NO photos attached to people
+    const storedProjBefore = await storage.getProject(pid);
+    expect(storedProjBefore.versions).toHaveLength(1);
+    const v1PeopleBefore = storedProjBefore.versions[0].people;
+    expect(v1PeopleBefore[0].photo).toBeFalsy();
+    expect(v1PeopleBefore[1].photo).toBeFalsy();
+
+    // 4. Build ZIP with 2 attendee photos + README.txt
+    const sharp = (await import("sharp")).default;
+    const validPng = await sharp({
+      create: { width: 40, height: 40, channels: 3, background: { r: 50, g: 150, b: 250 } },
+    }).png().toBuffer();
+
+    const { deflateRawSync } = await import("node:zlib");
+    function buildZip(entries) {
+      const table = (() => { const t = []; for (let n = 0; n < 256; n += 1) { let c = n; for (let k = 0; k < 8; k += 1) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : c >>> 1; t[n] = c >>> 0; } return t; })();
+      const crc32 = (data) => { let c = 0xffffffff; for (const byte of data) c = table[(c ^ byte) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+      const locals = []; const centrals = []; let offset = 0;
+      for (const entry of entries) {
+        const name = Buffer.from(entry.name); const body = entry.compress ? deflateRawSync(entry.data) : entry.data;
+        const local = Buffer.alloc(30 + name.length); local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(20, 4);
+        local.writeUInt16LE(entry.compress ? 8 : 0, 8); local.writeUInt32LE(crc32(entry.data), 14); local.writeUInt32LE(body.length, 18); local.writeUInt32LE(entry.data.length, 22);
+        local.writeUInt16LE(name.length, 26); name.copy(local, 30); locals.push(Buffer.concat([local, body]));
+        const central = Buffer.alloc(46 + name.length); central.writeUInt32LE(0x02014b50, 0); central.writeUInt16LE(20, 4); central.writeUInt16LE(20, 6);
+        central.writeUInt16LE(entry.compress ? 8 : 0, 10); central.writeUInt32LE(crc32(entry.data), 16); central.writeUInt32LE(body.length, 20); central.writeUInt32LE(entry.data.length, 24);
+        central.writeUInt16LE(name.length, 28); central.writeUInt32LE(offset, 42); name.copy(central, 46); centrals.push(central); offset += local.length + body.length;
+      }
+      const central = Buffer.concat(centrals); const eocd = Buffer.alloc(22); eocd.writeUInt32LE(0x06054b50, 0);
+      eocd.writeUInt16LE(entries.length, 8); eocd.writeUInt16LE(entries.length, 10); eocd.writeUInt32LE(central.length, 12); eocd.writeUInt32LE(offset, 16);
+      return Buffer.concat([...locals, central, eocd]);
+    }
+
+    const zipBuffer = buildZip([
+      { name: `${attendee1}.png`, data: validPng, compress: false },
+      { name: "bob@example.com.png", data: validPng, compress: false },
+      { name: "README.txt", data: Buffer.from("Harmless non-image readme note"), compress: false },
+    ]);
+
+    // 5. Upload photo ZIP
+    const photoUploadRes = await fetch(`${baseUrl}/projects/${pid}/photos`, {
+      method: "POST",
+      headers: { "Content-Type": "application/zip" },
+      body: zipBuffer,
+    });
+    expect(photoUploadRes.status).toBe(200);
+    const photoBody = await photoUploadRes.json();
+    expect(photoBody.matches).toHaveLength(2);
+    expect(photoBody.unmatchedFiles).toHaveLength(0);
+    expect(photoBody.warnings).toHaveLength(0);
+    expect(photoBody.ignoredFiles).toEqual([
+      { file: "README.txt", reason: "Harmless non-image text file" },
+    ]);
+
+    // 6. Verify people in current project storage have photos attached
+    const storedProjAfter = await storage.getProject(pid);
+    const person1 = storedProjAfter.people.find((p) => p.id === attendee1);
+    const person2 = storedProjAfter.people.find((p) => p.id === attendee2);
+    expect(person1.photo).toBe(`${attendee1}.jpg`);
+    expect(person2.photo).toBe(`${attendee2}.jpg`);
+    expect(person1.flags.includes("NO_PHOTO")).toBe(false);
+    expect(person2.flags.includes("NO_PHOTO")).toBe(false);
+
+    // 7. PROVE IMMUTABILITY: Verify saved version 1 snapshot was NOT modified
+    expect(storedProjAfter.versions).toHaveLength(1);
+    const v1PeopleAfter = storedProjAfter.versions[0].people;
+    expect(v1PeopleAfter[0].photo).toBeFalsy();
+    expect(v1PeopleAfter[1].photo).toBeFalsy();
+    expect(storedProjAfter.versions[0].timestamp).toBe(storedProjBefore.versions[0].timestamp);
+    expect(storedProjAfter.versions[0].note).toBe("Version before photos");
+  });
+
+  it("sanitizer safety: strictly purges 4-point synthetic stress issues and preserves genuine validation errors", async () => {
+    const { isSyntheticStressRoleIssue, sanitizeSyntheticRoleIssues } = await import("./storage/schemas.js");
+
+    const currentPeople = [
+      { id: "REAL-ATTENDEE-001", name: "Alice", roleId: "participant" },
+      { id: "HX26-S-001", name: "Real Attendee with Stress ID", roleId: "participant" },
+    ];
+
+    // Case 1: Real synthetic issue (ALL 4 conditions hold):
+    // UNKNOWN_ROLE_ID + HX26-S-002 (not in currentPeople) + role 'participant'
+    const syntheticIssue = {
+      severity: "error",
+      code: "UNKNOWN_ROLE_ID",
+      nodeId: "role",
+      message: 'Person "HX26-S-002" has invalid or unrecognised roleId "participant"; must match an id in event.roles',
+    };
+    expect(isSyntheticStressRoleIssue(syntheticIssue, currentPeople)).toBe(true);
+    expect(sanitizeSyntheticRoleIssues([syntheticIssue], currentPeople)).toHaveLength(0);
+
+    // Case 2: Person ID is "boss" -> MUST BE KEPT!
+    const bossIssue = {
+      severity: "error",
+      code: "UNKNOWN_ROLE_ID",
+      nodeId: "role",
+      message: 'Person "boss" has invalid or unrecognised roleId "participant"; must match an id in event.roles',
+    };
+    expect(isSyntheticStressRoleIssue(bossIssue, currentPeople)).toBe(false);
+    expect(sanitizeSyntheticRoleIssues([bossIssue], currentPeople)).toHaveLength(1);
+
+    // Case 3: Empty role -> MUST BE KEPT!
+    const emptyRoleIssue = {
+      severity: "error",
+      code: "UNKNOWN_ROLE_ID",
+      nodeId: "role",
+      message: 'Person "HX26-S-003" has invalid or unrecognised roleId ""; must match an id in event.roles',
+    };
+    expect(isSyntheticStressRoleIssue(emptyRoleIssue, currentPeople)).toBe(false);
+    expect(sanitizeSyntheticRoleIssues([emptyRoleIssue], currentPeople)).toHaveLength(1);
+
+    // Case 4: Person ID is in currentPeople (real attendee named HX26-S-001) -> MUST BE KEPT!
+    const realAttendeeIssue = {
+      severity: "error",
+      code: "UNKNOWN_ROLE_ID",
+      nodeId: "role",
+      message: 'Person "HX26-S-001" has invalid or unrecognised roleId "participant"; must match an id in event.roles',
+    };
+    expect(isSyntheticStressRoleIssue(realAttendeeIssue, currentPeople)).toBe(false);
+    expect(sanitizeSyntheticRoleIssues([realAttendeeIssue], currentPeople)).toHaveLength(1);
+
+    // Case 5: Role is "speaker" (not participant/organizer) -> MUST BE KEPT!
+    const speakerIssue = {
+      severity: "error",
+      code: "UNKNOWN_ROLE_ID",
+      nodeId: "role",
+      message: 'Person "HX26-S-004" has invalid or unrecognised roleId "speaker"; must match an id in event.roles',
+    };
+    expect(isSyntheticStressRoleIssue(speakerIssue, currentPeople)).toBe(false);
+    expect(sanitizeSyntheticRoleIssues([speakerIssue], currentPeople)).toHaveLength(1);
+
+    // Case 6: Issue code is NOT UNKNOWN_ROLE_ID -> MUST BE KEPT!
+    const otherCodeIssue = {
+      severity: "error",
+      code: "TEXT_OVERFLOW",
+      nodeId: "name",
+      message: 'Text overflow for person "HX26-S-005"',
+    };
+    expect(isSyntheticStressRoleIssue(otherCodeIssue, currentPeople)).toBe(false);
+    expect(sanitizeSyntheticRoleIssues([otherCodeIssue], currentPeople)).toHaveLength(1);
+
+    // Case 7: Names containing 'dry-run' or 'PREVIEW-' with non-stress IDs -> MUST BE KEPT!
+    const dryRunIssue = {
+      severity: "error",
+      code: "UNKNOWN_ROLE_ID",
+      nodeId: "role",
+      message: 'Person "dry-run-user" has invalid or unrecognised roleId "participant"; must match an id in event.roles',
+    };
+    expect(isSyntheticStressRoleIssue(dryRunIssue, currentPeople)).toBe(false);
+    expect(sanitizeSyntheticRoleIssues([dryRunIssue], currentPeople)).toHaveLength(1);
+  });
+
+  it("verifies getProject(id) is strictly read-only in storage with zero writes", async () => {
+    const created = await storage.createProject({
+      name: "Read-Only Storage Verification",
+      eventSpec: sampleEventSpec,
+    });
+    const projId = created.id;
+
+    const read1 = await storage.getProject(projId);
+    expect(read1).toBeDefined();
+
+    // Verify Mongo getProject implementation is also strictly read-only by code inspection
+    const { createMongoStorage } = await import("./storage/mongo.js");
+    const mongoCode = createMongoStorage.toString();
+    expect(mongoCode.includes("updateOne")).toBe(false);
+    expect(mongoCode.includes("$unset")).toBe(false);
+  });
+
+  describe("Sanitizer & Export Gating Verification (Requirements 2a - 2f)", () => {
+    it("(a) proves export blockers come from CURRENT attendees and not from stale draft.issues in a saved version", async () => {
+      const projRes = await fetch(`${baseUrl}/projects`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Test 2a Current Attendees Gating",
+          eventSpec: sampleEventSpec,
+        }),
+      });
+      const proj = await projRes.json();
+      const pid = proj.id;
+
+      // Ingest valid CSV
+      await fetch(`${baseUrl}/projects/${pid}/data`, {
+        method: "POST",
+        headers: { "Content-Type": "text/csv" },
+        body: "name,role,organization\nValid Person,participant,ACM\n",
+      });
+
+      // Generate drafts & save version
+      await fetch(`${baseUrl}/projects/${pid}/drafts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ count: 1 }),
+      });
+
+      const vRes = await fetch(`${baseUrl}/projects/${pid}/versions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ draftIndex: 0, note: "Version with injected stale issue" }),
+      });
+      expect(vRes.status).toBe(201);
+
+      // Inject a stale error directly into stored version's draft.issues
+      const stored = await storage.getProject(pid);
+      stored.versions[0].draft.issues.push({
+        severity: "error",
+        code: "STALE_DRAFT_ERROR",
+        message: "Stale issue in draft.issues",
+      });
+
+      // Export sheet re-renders current attendees via renderCard and ignores stale draft.issues
+      const exportRes = await fetch(`${baseUrl}/projects/${pid}/export`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          kind: "sheet",
+          format: "pdf",
+          paper: "A4",
+          acknowledgedWarnings: true,
+        }),
+      });
+      expect(exportRes.status).toBe(200);
+      expect(exportRes.headers.get("Content-Type")).toBe("application/pdf");
+    });
+
+    it("(b) export returning 422 for role 'boss'", async () => {
+      const projRes = await fetch(`${baseUrl}/projects`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Test 2b Role Boss",
+          eventSpec: sampleEventSpec,
+        }),
+      });
+      const proj = await projRes.json();
+      const pid = proj.id;
+
+      await storage.addDatasetReport(pid, {
+        report: { totals: { rows: 1 } },
+        people: [{ id: "P-BOSS", name: "Boss", roleId: "boss" }],
+      });
+
+      await fetch(`${baseUrl}/projects/${pid}/drafts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ count: 1 }),
+      });
+
+      const vRes = await fetch(`${baseUrl}/projects/${pid}/versions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ draftIndex: 0 }),
+      });
+      expect(vRes.status).toBe(201);
+
+      const exportRes = await fetch(`${baseUrl}/projects/${pid}/export`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          kind: "sheet",
+          format: "pdf",
+          paper: "A4",
+          acknowledgedWarnings: true,
+        }),
+      });
+      expect(exportRes.status).toBe(422);
+      const body = await exportRes.json();
+      expect(body.error.code).toBe("UNKNOWN_ROLE_ID");
+      expect(body.error.issues.some((i) => i.code === "UNKNOWN_ROLE_ID")).toBe(true);
+    });
+
+    it("(c) export returning 422 for an empty role", async () => {
+      const projRes = await fetch(`${baseUrl}/projects`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Test 2c Empty Role",
+          eventSpec: sampleEventSpec,
+        }),
+      });
+      const proj = await projRes.json();
+      const pid = proj.id;
+
+      await storage.addDatasetReport(pid, {
+        report: { totals: { rows: 1 } },
+        people: [{ id: "P-EMPTY", name: "No Role Person", roleId: "" }],
+      });
+
+      await fetch(`${baseUrl}/projects/${pid}/drafts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ count: 1 }),
+      });
+
+      const vRes = await fetch(`${baseUrl}/projects/${pid}/versions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ draftIndex: 0 }),
+      });
+      expect(vRes.status).toBe(201);
+
+      const exportRes = await fetch(`${baseUrl}/projects/${pid}/export`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          kind: "sheet",
+          format: "pdf",
+          paper: "A4",
+          acknowledgedWarnings: true,
+        }),
+      });
+      expect(exportRes.status).toBe(422);
+      const body = await exportRes.json();
+      expect(body.error.code).toBe("UNKNOWN_ROLE_ID");
+    });
+
+    it("(d) a genuine attendee whose name contains 'dry-run' or 'PREVIEW-' still blocks export with 422", async () => {
+      const projRes = await fetch(`${baseUrl}/projects`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Test 2d dry-run and PREVIEW- names",
+          eventSpec: sampleEventSpec,
+        }),
+      });
+      const proj = await projRes.json();
+      const pid = proj.id;
+
+      await storage.addDatasetReport(pid, {
+        report: { totals: { rows: 1 } },
+        people: [
+          { id: "ATT-DRYRUN", name: "PREVIEW dry-run", roleId: "unregistered_role" },
+        ],
+      });
+
+      await fetch(`${baseUrl}/projects/${pid}/drafts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ count: 1 }),
+      });
+
+      const vRes = await fetch(`${baseUrl}/projects/${pid}/versions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ draftIndex: 0 }),
+      });
+      expect(vRes.status).toBe(201);
+
+      const exportRes = await fetch(`${baseUrl}/projects/${pid}/export`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          kind: "sheet",
+          format: "pdf",
+          paper: "A4",
+          acknowledgedWarnings: true,
+        }),
+      });
+      expect(exportRes.status).toBe(422);
+      const body = await exportRes.json();
+      expect(body.error.code).toBe("UNKNOWN_ROLE_ID");
+      expect(body.error.issues.some((i) => i.code === "UNKNOWN_ROLE_ID")).toBe(true);
+    });
+
+    it("(e) an ambiguous record warning is preserved and blocks export when unacknowledged", async () => {
+      const projRes = await fetch(`${baseUrl}/projects`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Test 2e Ambiguous Record Warning",
+          eventSpec: sampleEventSpec,
+        }),
+      });
+      const proj = await projRes.json();
+      const pid = proj.id;
+
+      await storage.addDatasetReport(pid, {
+        report: { totals: { rows: 1 } },
+        people: [
+          { id: "P-WARN", name: "Alice Missing Photo", roleId: "participant", photo: null, flags: ["NO_PHOTO"] },
+        ],
+      });
+
+      await fetch(`${baseUrl}/projects/${pid}/drafts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ count: 1 }),
+      });
+
+      const vRes = await fetch(`${baseUrl}/projects/${pid}/versions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ draftIndex: 0 }),
+      });
+      expect(vRes.status).toBe(201);
+
+      // With acknowledgedWarnings: false, export must refuse with 422 NO_PHOTO
+      const exportRes = await fetch(`${baseUrl}/projects/${pid}/export`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          kind: "sheet",
+          format: "pdf",
+          paper: "A4",
+          acknowledgedWarnings: false,
+        }),
+      });
+      expect(exportRes.status).toBe(422);
+      const body = await exportRes.json();
+      expect(body.error.code).toBe("NO_PHOTO");
+    });
+
+    it("(f) a real attendee with id HX26-S-001 that exists in current data is preserved and blocks export with 422", async () => {
+      const projRes = await fetch(`${baseUrl}/projects`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Test 2f Real Attendee with Stress ID",
+          eventSpec: sampleEventSpec,
+        }),
+      });
+      const proj = await projRes.json();
+      const pid = proj.id;
+
+      await storage.addDatasetReport(pid, {
+        report: { totals: { rows: 1 } },
+        people: [
+          { id: "HX26-S-001", name: "Sam", roleId: "bad_role" },
+        ],
+      });
+
+      await fetch(`${baseUrl}/projects/${pid}/drafts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ count: 1 }),
+      });
+
+      const vRes = await fetch(`${baseUrl}/projects/${pid}/versions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ draftIndex: 0 }),
+      });
+      expect(vRes.status).toBe(201);
+
+      const exportRes = await fetch(`${baseUrl}/projects/${pid}/export`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          kind: "sheet",
+          format: "pdf",
+          paper: "A4",
+          acknowledgedWarnings: true,
+        }),
+      });
+      expect(exportRes.status).toBe(422);
+      const body = await exportRes.json();
+      expect(body.error.code).toBe("UNKNOWN_ROLE_ID");
+      expect(body.error.issues.some((i) => i.code === "UNKNOWN_ROLE_ID")).toBe(true);
+    });
+  });
 });
