@@ -12,7 +12,14 @@
     "core"
   ],
   "scripts": {
+    "start": "node scripts/serve.js",
+    "build": "npm run build --workspace=@acm-studio/client",
+    "build:client": "npm run build --workspace=@acm-studio/client",
     "test": "npm run test --workspace=@acm-studio/core",
+    "test:all": "vitest run",
+    "test:server": "vitest run server/",
+    "test:core": "vitest run core/",
+    "test:client": "vitest run client/",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check ."

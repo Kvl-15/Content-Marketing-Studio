@@ -1,6 +1,14 @@
 // @ts-check
 import sharp from "sharp";
 
+// Disable libvips operation cache and threadpool over-allocation to bound native memory
+if (typeof sharp.cache === "function") {
+  sharp.cache(false);
+}
+if (typeof sharp.concurrency === "function") {
+  sharp.concurrency(1);
+}
+
 /**
  * @typedef {{
  *   boxWmm: number;
@@ -211,17 +219,16 @@ export async function preparePhotoForCard(input, options) {
   });
 
   // 5. Encode as JPEG quality 90, strip metadata (no withMetadata call)
-  const outputBuffer = await image
+  // Use resolveWithObject: true to receive dimensions directly, eliminating redundant metadata re-parse
+  const { data: outputBuffer, info } = await image
     .jpeg({
       quality,
       mozjpeg: false,
     })
-    .toBuffer();
+    .toBuffer({ resolveWithObject: true });
 
-  // Read back final output dimensions
-  const finalMeta = await sharp(outputBuffer).metadata();
-  const finalWidth = finalMeta.width || targetPxW;
-  const finalHeight = finalMeta.height || targetPxH;
+  const finalWidth = info.width || targetPxW;
+  const finalHeight = info.height || targetPxH;
 
   // Effective DPI calculation (actual pixels per inch at card box size)
   const effDpiX = finalWidth / (boxWmm / 25.4);

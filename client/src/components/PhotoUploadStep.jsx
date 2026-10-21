@@ -20,9 +20,23 @@ export function PhotoUploadStep({ project, hasDataset, onPhotosUploaded, onError
   const [matchingResults, setMatchingResults] = useState(null);
   const fileInputRef = useRef(null);
 
+  const MAX_ZIP_BYTES = 300 * 1024 * 1024;
+
+  const validateFile = (file) => {
+    if (file.size > MAX_ZIP_BYTES) {
+      const msg = `Photo archive size (${(file.size / (1024 * 1024)).toFixed(1)} MB) exceeds the maximum allowed limit of 300 MB.`;
+      setUploadError(msg);
+      onError?.(new Error(msg));
+      setSelectedFile(null);
+      return false;
+    }
+    return true;
+  };
+
   const handleFileChange = (e) => {
     const file = e.target.files?.[0];
     if (file) {
+      if (!validateFile(file)) return;
       setSelectedFile(file);
       setUploadError(null);
       onError(null);
@@ -46,6 +60,7 @@ export function PhotoUploadStep({ project, hasDataset, onPhotosUploaded, onError
     if (!hasDataset) return;
     const file = e.dataTransfer.files?.[0];
     if (file) {
+      if (!validateFile(file)) return;
       setSelectedFile(file);
       setUploadError(null);
       onError(null);
@@ -55,6 +70,7 @@ export function PhotoUploadStep({ project, hasDataset, onPhotosUploaded, onError
   const handleUpload = async (e) => {
     e.preventDefault();
     if (!selectedFile || !hasDataset) return;
+    if (!validateFile(selectedFile)) return;
 
     setUploading(true);
     setUploadError(null);

@@ -15,6 +15,7 @@ export {
   closeSharedBrowser,
   renderSvgToPdf,
   renderHtmlToPdf,
+  renderHtmlFileToPdf,
   inspectPdfBytes,
 } from "./pdf.js";
 export {

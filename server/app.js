@@ -1,5 +1,7 @@
 // @ts-check
 import express from "express";
+import path from "node:path";
+import fs from "node:fs";
 import { createCorsMiddleware } from "./cors.js";
 import { createApiRouter } from "./routes/index.js";
 import { createIntakeRouter } from "./routes/intake.js";
@@ -47,7 +49,26 @@ export async function createApp(options = {}) {
   app.use(createApiRouter());
   app.use(createIntakeRouter());
 
-  // 6. 404 handler matching API contract
+  // 6. Production client static serving (when client/dist is built)
+  const clientDist = path.resolve(import.meta.dirname, "../client/dist");
+  if (fs.existsSync(clientDist)) {
+    app.use(express.static(clientDist));
+    app.use((req, res, next) => {
+      // Don't intercept API routes or non-GET requests
+      if (
+        req.method !== "GET" ||
+        req.path.startsWith("/projects") ||
+        req.path.startsWith("/intake") ||
+        req.path.startsWith("/health") ||
+        req.path.startsWith("/api")
+      ) {
+        return next();
+      }
+      res.sendFile(path.join(clientDist, "index.html"));
+    });
+  }
+
+  // 7. 404 handler matching API contract
   app.use((req, res) => {
     res.status(404).json({
       error: {

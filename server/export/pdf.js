@@ -1,5 +1,7 @@
 // @ts-check
 import puppeteer from "puppeteer";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 /**
  * Global shared browser instance when pooling across exports.
@@ -23,6 +25,16 @@ export async function launchBrowser(extraOptions = {}) {
       "--disable-setuid-sandbox",
       "--disable-gpu",
       "--disable-dev-shm-usage",
+      "--js-flags=--max-old-space-size=512",
+      "--disable-background-networking",
+      "--disable-breakpad",
+      "--disable-component-update",
+      "--disable-domain-reliability",
+      "--disable-extensions",
+      "--disable-sync",
+      "--mute-audio",
+      "--no-default-browser-check",
+      "--no-first-run",
     ],
     ...extraOptions,
   });
@@ -91,15 +103,20 @@ export async function withBrowser(fn, options = {}) {
 
 /**
  * Configures request interception on a Puppeteer page to block any network requests
- * that are not data: URLs or the page itself (about:blank).
+ * that are not data: URLs, about:blank, or an explicitly allowed local file URL.
  *
  * @param {import("puppeteer").Page} page
+ * @param {string | null} [allowedFileUrl]
  */
-export async function enforceOfflinePage(page) {
+export async function enforceOfflinePage(page, allowedFileUrl = null) {
   await page.setRequestInterception(true);
   page.on("request", (req) => {
     const url = req.url();
-    if (url === "about:blank" || url.startsWith("data:")) {
+    if (
+      url === "about:blank" ||
+      url.startsWith("data:") ||
+      (allowedFileUrl && (url === allowedFileUrl || url.startsWith(allowedFileUrl)))
+    ) {
       req.continue();
     } else {
       req.abort("blockedbyclient");
@@ -196,6 +213,47 @@ export async function renderHtmlToPdf(htmlContent, options) {
         await enforceOfflinePage(page);
 
         await page.setContent(htmlContent, { waitUntil: "load" });
+
+        const pdfArray = await page.pdf({
+          width: `${widthMm}mm`,
+          height: `${heightMm}mm`,
+          margin: { top: 0, right: 0, bottom: 0, left: 0 },
+          printBackground: true,
+          preferCSSPageSize: true,
+        });
+
+        return Buffer.from(pdfArray);
+      } finally {
+        await page.close().catch(() => {});
+      }
+    },
+    { browser }
+  );
+}
+
+/**
+ * Renders an HTML document from a local file path into a vector PDF without holding
+ * the full HTML document string or JSON IPC payload in Node's heap.
+ *
+ * @param {string} htmlFilePath - Absolute or relative path to the local HTML file
+ * @param {{
+ *   widthMm: number;
+ *   heightMm: number;
+ *   browser?: import("puppeteer").Browser;
+ * }} options
+ * @returns {Promise<Buffer>}
+ */
+export async function renderHtmlFileToPdf(htmlFilePath, options) {
+  const { widthMm, heightMm, browser } = options;
+  const fileUrl = pathToFileURL(path.resolve(htmlFilePath)).href;
+
+  return withBrowser(
+    async (b) => {
+      const page = await b.newPage();
+      try {
+        await enforceOfflinePage(page, fileUrl);
+
+        await page.goto(fileUrl, { waitUntil: "load" });
 
         const pdfArray = await page.pdf({
           width: `${widthMm}mm`,

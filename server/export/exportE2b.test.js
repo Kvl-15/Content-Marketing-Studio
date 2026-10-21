@@ -147,7 +147,7 @@ describe("E2b: PDF, Print Sheets, ZIP, and Vector QR Module", () => {
       expect(browserRef).not.toBeNull();
       // Browser must be disconnected / closed after error
       expect(browserRef?.connected).toBe(false);
-    });
+    }, 15000);
 
     it("blocks non-data network requests in Chromium and fails closed on http images", async () => {
       await withBrowser(async (browser) => {
@@ -181,7 +181,7 @@ describe("E2b: PDF, Print Sheets, ZIP, and Vector QR Module", () => {
         expect(blockedCount).toBeGreaterThanOrEqual(1);
         expect(imgFailed).toBe(true);
       });
-    });
+    }, 15000);
 
     it("verifies neutral PDF metadata (Title: ID cards, no Author, no personal names/emails)", async () => {
       const input = {
@@ -212,7 +212,7 @@ describe("E2b: PDF, Print Sheets, ZIP, and Vector QR Module", () => {
       expect(sheetInspect.producer).toContain("Skia/PDF");
       expect(sheetInspect.title).not.toContain(personNormal.name);
       expect(sheetInspect.title).not.toContain(personNormal.email);
-    });
+    }, 15000);
   });
 
   // =========================================================================

@@ -9,7 +9,7 @@ export const DATA_LIMITS = Object.freeze({
   maxPhotoEntryUncompressedBytes: 8 * 1024 * 1024,
   maxPhotoTotalUncompressedBytes: 300 * 8 * 1024 * 1024,
   maxPhotoPixels: 40_000_000,
-  maxZipBytes: 300 * 8 * 1024 * 1024,
+  maxZipBytes: 300 * 1024 * 1024,
   maxZipEntries: 300,
   maxZipEntryCompressedBytes: 8 * 1024 * 1024,
   maxZipEntryUncompressedBytes: 8 * 1024 * 1024,

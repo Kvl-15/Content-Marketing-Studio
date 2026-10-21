@@ -298,7 +298,11 @@ export function deriveEventCode(eventName, dates) {
  */
 export function getProjectPhotoDir(projectId) {
   const safeId = ProjectIdSchema.parse(projectId);
-  return path.join(os.tmpdir(), "acm-studio", safeId);
+  const baseDir =
+    process.env.PHOTOS_DIR ||
+    process.env.PERSISTENT_DATA_DIR ||
+    path.join(os.tmpdir(), "acm-studio");
+  return path.join(path.resolve(baseDir), safeId);
 }
 
 /**

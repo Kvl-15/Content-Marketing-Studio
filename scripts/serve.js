@@ -1,4 +1,6 @@
 // @ts-check
+import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import { createApp } from "../server/app.js";
 import { closeSharedBrowser } from "../server/export/index.js";
 
@@ -12,14 +14,27 @@ if (typeof process.loadEnvFile === "function") {
 }
 
 const port = Number(process.env.PORT || 3000);
+const host = process.env.HOST || "0.0.0.0";
 
 async function main() {
   const app = await createApp();
 
-  const server = app.listen(port, () => {
-    console.log(`[server] ACM Content Marketing Studio listening on http://localhost:${port}`);
+  const server = app.listen(port, host, () => {
+    console.log(`[server] ACM Content Marketing Studio listening on http://${host}:${port}`);
     console.log(`[server] Storage backend: ${app.locals.storage.type}`);
+    console.log(`[server] Photos storage: ${process.env.PHOTOS_DIR || "default (temporary)"}`);
   });
+
+  const photosDir = process.env.PHOTOS_DIR || process.env.PERSISTENT_DATA_DIR;
+  if (photosDir) {
+    try {
+      await fs.mkdir(photosDir, { recursive: true });
+      await fs.access(photosDir, fsSync.constants.W_OK);
+      console.log(`[server] Photos storage directory '${photosDir}' verified writable.`);
+    } catch (err) {
+      console.warn(`[server] WARNING: Photos directory '${photosDir}' is not writable: ${err?.message || err}. Ensure runtime user has write permissions.`);
+    }
+  }
 
   // Long export timeouts (Condition 4: 10 minutes)
   server.requestTimeout = 10 * 60 * 1000;

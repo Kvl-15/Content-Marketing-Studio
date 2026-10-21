@@ -1,11 +1,12 @@
 // @ts-check
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { parseExportSettings } from "../../core/exportSettings.js";
 import { sheetLayout } from "../../core/sheet.js";
 import { renderCard } from "../../core/render.js";
 import { checkExportGate } from "./gate.js";
-import { renderHtmlToPdf } from "./pdf.js";
+import { renderHtmlFileToPdf, renderHtmlToPdf } from "./pdf.js";
 import {
   preparePhotoForCard,
   extractPhotoBoxFromScene,
@@ -261,7 +262,18 @@ export async function exportSheet(input, settingsInput = {}, options = {}) {
     }
   }
 
-  // 6. PHASE 1: Render each card and run D-09 GATE on EVERY card BEFORE touching Chromium
+  // Helper for backpressure-safe streaming writes
+  /**
+   * @param {import("node:fs").WriteStream} stream
+   * @param {string} chunk
+   */
+  const writeChunk = async (stream, chunk) => {
+    if (!stream.write(chunk)) {
+      await new Promise((resolve) => stream.once("drain", resolve));
+    }
+  };
+
+  // 6. PHASE 1: Sheet Imposition using core/sheet.js (run first so cards stream into exact page cells)
   const tStart = performance.now();
   let photoSourceReadMs = 0;
   let photoPrepMs = 0;
@@ -269,234 +281,8 @@ export async function exportSheet(input, settingsInput = {}, options = {}) {
   let gateCheckMs = 0;
   let totalPreparedPhotoBytes = 0;
   let preparedPhotoCount = 0;
-  /** @type {Array<{ person: Person, rendered: any, draft: any }>} */
-  const cardRenders = [];
-  /** @type {string[]} Failing person IDs only (privacy rule: no names, no emails) */
-  const failingPersonIds = [];
-  /** @type {any[]} */
-  const allErrors = [];
-  /** @type {any[]} */
-  const allWarnings = [];
 
-  // Cache assumed photo boxes per draft archetype to avoid redundant dry runs
-  const draftPhotoBoxCache = new Map();
-
-  for (let idx = 0; idx < peopleList.length; idx++) {
-    const person = peopleList[idx];
-    const pid = person && typeof person.id === "string" && person.id.trim() !== "" ? person.id : `card-${idx}`;
-    const cardItem = input.cards ? input.cards[idx] : null;
-    const cardDraft = cardItem?.draft || input.draft;
-    const photoSource = cardItem?.photoSource || input.photoSource;
-
-    // Discover assumed photo box for this draft (one dry run per draft archetype)
-    const draftKey = cardDraft?.look?.id || cardDraft?.skeleton || "default";
-    let assumedBox = draftPhotoBoxCache.get(draftKey);
-    const fallbackRoleId = input.eventSpec?.roles?.[0]?.id || "participant";
-    if (!assumedBox && cardDraft) {
-      const dry = renderCard({
-        skeleton: cardDraft.skeleton,
-        blocks: cardDraft.blocks,
-        theme: cardDraft.theme,
-        look: cardDraft.look,
-        person: { id: "dry-run", name: "Sample Person", roleId: fallbackRoleId },
-        brand: input.brand,
-        fonts: input.fonts,
-        event: input.eventSpec,
-        card: {
-          widthMm: settings.card.widthMm,
-          heightMm: settings.card.heightMm,
-          orientation: settings.orientation,
-        },
-        bleedMm: settings.bleedMm,
-      });
-      assumedBox = extractPhotoBoxFromScene(dry.scene);
-      if (assumedBox) {
-        draftPhotoBoxCache.set(draftKey, assumedBox);
-      }
-    }
-
-    // Condition 4: Process photos one at a time (sequential)
-    // photoSource contract: photoSource(pid) wins over person.photo
-    const photoSourceFn =
-      (typeof cardItem?.photoSource === "function" && cardItem.photoSource) ||
-      (typeof input.photoSource === "function" && input.photoSource) ||
-      null;
-
-    let masterPhoto = null;
-    let preparedPhotoUri = person.photo;
-
-    if (photoSourceFn) {
-      try {
-        const tSrc0 = performance.now();
-        const srcResult = await photoSourceFn(pid);
-        photoSourceReadMs += performance.now() - tSrc0;
-        if (srcResult === null) {
-          // null means "no photo": initials avatar + missing-photo warning
-          preparedPhotoUri = null;
-          masterPhoto = null;
-        } else if (!Buffer.isBuffer(srcResult)) {
-          failingPersonIds.push(pid);
-          allErrors.push({
-            severity: "error",
-            code: "PhotoPrepError",
-            message: `[Person ${pid}] PhotoPrepError: photoSource returned a non-Buffer value`,
-          });
-          continue;
-        } else if (srcResult.length === 0) {
-          failingPersonIds.push(pid);
-          allErrors.push({
-            severity: "error",
-            code: "PhotoPrepError",
-            message: `[Person ${pid}] PhotoPrepError: photoSource returned an empty buffer (0 bytes)`,
-          });
-          continue;
-        } else {
-          masterPhoto = srcResult;
-        }
-      } catch (err) {
-        const msg = /** @type {Error} */ (err).message || "photoSource threw an error";
-        failingPersonIds.push(pid);
-        allErrors.push({
-          severity: "error",
-          code: "PhotoPrepError",
-          message: `[Person ${pid}] PhotoPrepError: ${msg}`,
-        });
-        continue;
-      }
-    } else if (person.photo) {
-      masterPhoto = person.photo;
-    }
-
-    const isImageToPrepare =
-      masterPhoto &&
-      (typeof masterPhoto !== "string" || masterPhoto.startsWith("data:"));
-
-    if (isImageToPrepare && assumedBox) {
-      const tP0 = performance.now();
-      try {
-        const prep = await preparePhotoForCard(masterPhoto, {
-          boxWmm: assumedBox.w,
-          boxHmm: assumedBox.h,
-          dpi: settings.dpi,
-          personId: pid,
-        });
-        preparedPhotoUri = prep.dataUri;
-      } catch (err) {
-        const prepErr = /** @type {PhotoPrepError} */ (err);
-        failingPersonIds.push(pid);
-        allErrors.push({
-          severity: "error",
-          code: prepErr.code || "INVALID_PHOTO_DATA",
-          message: prepErr.message,
-        });
-        continue;
-      }
-      photoPrepMs += performance.now() - tP0;
-    }
-
-    // Clone person object: do NOT mutate caller's input object (Condition 6)
-    const effectivePerson = { ...person, photo: preparedPhotoUri };
-
-    const renderInput = {
-      skeleton: cardDraft?.skeleton,
-      blocks: cardDraft?.blocks,
-      theme: cardDraft?.theme,
-      look: cardDraft?.look,
-      person: effectivePerson,
-      photoSource,
-      brand: input.brand,
-      fonts: input.fonts,
-      event: input.eventSpec,
-      card: {
-        widthMm: settings.card.widthMm,
-        heightMm: settings.card.heightMm,
-        orientation: settings.orientation,
-      },
-      bleedMm: settings.bleedMm,
-    };
-
-    const tR0 = performance.now();
-    let rendered = renderCard(renderInput);
-    cardRenderMs += performance.now() - tR0;
-
-    // Condition 2: If real rendered box differs from assumed box by > 0.01 mm, re-prepare and re-render
-    const realBox = extractPhotoBoxFromScene(rendered.scene);
-    if (realBox && assumedBox && masterPhoto) {
-      if (
-        Math.abs(assumedBox.w - realBox.w) > 0.01 ||
-        Math.abs(assumedBox.h - realBox.h) > 0.01
-      ) {
-        const tP0 = performance.now();
-        try {
-          const rePrep = await preparePhotoForCard(masterPhoto, {
-            boxWmm: realBox.w,
-            boxHmm: realBox.h,
-            dpi: settings.dpi,
-            personId: pid,
-          });
-          effectivePerson.photo = rePrep.dataUri;
-          renderInput.person = effectivePerson;
-          const tR1 = performance.now();
-          rendered = renderCard(renderInput);
-          cardRenderMs += performance.now() - tR1;
-        } catch (err) {
-          const prepErr = /** @type {PhotoPrepError} */ (err);
-          failingPersonIds.push(pid);
-          allErrors.push({
-            severity: "error",
-            code: prepErr.code || "INVALID_PHOTO_DATA",
-            message: prepErr.message,
-          });
-          continue;
-        }
-        photoPrepMs += performance.now() - tP0;
-      }
-    }
-    // Explicitly release large master photo buffer before memory-heavy sheet generation
-    /* eslint-disable-next-line no-useless-assignment */
-    masterPhoto = null;
-    if (effectivePerson.photo) {
-      totalPreparedPhotoBytes += effectivePerson.photo.length;
-      preparedPhotoCount++;
-    }
-
-    // Filter false-positive LOGO_DISTORTED on photo nodes (caused by core/render.js hardcoding srcW: 500, srcH: 500)
-    const validIssues = rendered.issues.filter(
-      (i) => !(i.code === "LOGO_DISTORTED" && i.nodeId === "photo")
-    );
-    const tG0 = performance.now();
-    const gateResult = checkExportGate(validIssues, {
-      acknowledgedWarnings: options.acknowledgedWarnings ?? false,
-    });
-    gateCheckMs += performance.now() - tG0;
-
-    if (!gateResult.ok) {
-      failingPersonIds.push(pid);
-      allErrors.push(...gateResult.errors);
-      allWarnings.push(...gateResult.warnings);
-    } else {
-      allWarnings.push(...gateResult.warnings);
-    }
-
-    cardRenders.push({ person: effectivePerson, rendered, draft: cardDraft });
-  }
-
-  // If ANY card failed the D-09 gate, refuse the entire batch immediately!
-  // NO browser is launched, and ZERO bytes are written to disk.
-  if (failingPersonIds.length > 0) {
-    return {
-      ok: false,
-      failingPersonIds,
-      issues: allErrors,
-      errors: allErrors,
-      warnings: allWarnings,
-      reason: `Export refused: ${failingPersonIds.length} card(s) failed D-09 gate. Failing person IDs: ${failingPersonIds.join(", ")}`,
-    };
-  }
-
-  // 7. PHASE 2: Imposition using core/sheet.js
   const tLayout0 = performance.now();
-  // Pass list of cards with id and roleId for role grouping
   const layoutFallbackRoleId = input.eventSpec?.roles?.[0]?.id || "participant";
   const layoutCardItems = peopleList.map((p, idx) => ({
     id: p.id || `card-${idx}`,
@@ -507,6 +293,10 @@ export async function exportSheet(input, settingsInput = {}, options = {}) {
   const layoutMs = performance.now() - tLayout0;
 
   // Check sheet-level layout warnings against D-09 gate (e.g. MARKS_NEAR_PAGE_EDGE)
+  /** @type {any[]} */
+  const allErrors = [];
+  /** @type {any[]} */
+  const allWarnings = [];
   if (Array.isArray(layoutResult.warnings) && layoutResult.warnings.length > 0) {
     const layoutIssues = layoutResult.warnings.map((w) => ({
       code: w.code,
@@ -528,107 +318,347 @@ export async function exportSheet(input, settingsInput = {}, options = {}) {
     allWarnings.push(...layoutGate.warnings);
   }
 
-  // 8. PHASE 3: Assemble Sheet SVGs & HTML
-  const tSvg0 = performance.now();
-
-  // Map card renders by ID for quick lookup during cell placement
-  /** @type {Map<string, { person: Person, rendered: any, draft: any }>} */
-  const cardMap = new Map();
+  // Map input people by cardId for fast placement
+  const peopleMap = new Map();
   peopleList.forEach((p, idx) => {
-    const id = p.id || `card-${idx}`;
-    cardMap.set(id, cardRenders[idx]);
+    const pid = p && typeof p.id === "string" && p.id.trim() !== "" ? p.id : `card-${idx}`;
+    const cardItem = input.cards ? input.cards[idx] : null;
+    peopleMap.set(pid, { person: p, cardItem, idx });
   });
 
-  // Set of shared global definition IDs (brand logos in sheet <defs>)
-  const sharedDefIds = new Set(brandLogos.map((l) => l.defId));
-
-  // 8. Generate SVG document for each sheet page
+  // Shared brand logos defs
   const sheetW = settings.sheet.widthMm;
   const sheetH = settings.sheet.heightMm;
+  let brandDefsContent = "";
+  for (const logo of brandLogos) {
+    brandDefsContent += `<svg id="${logo.defId}" viewBox="0 0 ${logo.width} ${logo.height}"><image width="${logo.width}" height="${logo.height}" href="${logo.dataUri}"/></svg>\n`;
+  }
+  const sharedDefIds = new Set(brandLogos.map((l) => l.defId));
 
-  /** @type {string[]} Array of page SVGs */
+  // Prepare streaming target
+  const isSvg = settings.format === "svg";
+  /** @type {string[]} Used only if format === "svg" */
   const pageSvgs = [];
+  /** @type {string | null} */
+  let tempDir = null;
+  /** @type {string | null} */
+  let tempHtmlPath = null;
+  /** @type {import("node:fs").WriteStream | null} */
+  let writeStream = null;
 
-  for (const page of layoutResult.pages) {
-    let pageContent = "";
+  if (!isSvg) {
+    tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "acm-export-"));
+    tempHtmlPath = path.join(tempDir, "document.html");
+    writeStream = fs.createWriteStream(tempHtmlPath, { encoding: "utf8" });
 
-    // 8a. Embedded shared logo definitions in sheet <defs>
-    let defsContent = "";
-    for (const logo of brandLogos) {
-      defsContent += `<svg id="${logo.defId}" viewBox="0 0 ${logo.width} ${logo.height}"><image width="${logo.width}" height="${logo.height}" href="${logo.dataUri}"/></svg>\n`;
-    }
-    pageContent += `<defs>\n${defsContent}</defs>\n`;
+    // Stream HTML document shell
+    await writeChunk(
+      writeStream,
+      `<!DOCTYPE html>\n<html>\n<head>\n<meta charset="utf-8">\n<title>ID cards</title>\n<style>\n  @page { size: ${sheetW}mm ${sheetH}mm; margin: 0; }\n  html, body { margin: 0; padding: 0; }\n  .sheet-page { width: ${sheetW}mm; height: ${sheetH}mm; page-break-after: always; break-after: page; box-sizing: border-box; overflow: hidden; }\n  .sheet-page:last-child { page-break-after: avoid; break-after: avoid; }\n  svg { display: block; width: ${sheetW}mm; height: ${sheetH}mm; }\n</style>\n</head>\n<body>\n`
+    );
+  }
 
-    // 8b. Place each card cell
-    for (let cellIdx = 0; cellIdx < page.cells.length; cellIdx++) {
-      const cell = page.cells[cellIdx];
-      const cardData = cardMap.get(cell.cardId);
-      if (!cardData) continue;
+  const tSvg0 = performance.now();
+  /** @type {string[]} Failing person IDs only (privacy rule: no names, no emails) */
+  const failingPersonIds = [];
+  const draftPhotoBoxCache = new Map();
 
-      let cardSvg = cardData.rendered.svg;
+  try {
+    for (const page of layoutResult.pages) {
+      let currentPageSvg = "";
+      if (isSvg) {
+        currentPageSvg += `<svg xmlns="http://www.w3.org/2000/svg" width="${sheetW}mm" height="${sheetH}mm" viewBox="0 0 ${sheetW} ${sheetH}">\n<defs>\n${brandDefsContent}</defs>\n`;
+      } else if (writeStream) {
+        await writeChunk(
+          writeStream,
+          `  <div class="sheet-page">\n<svg xmlns="http://www.w3.org/2000/svg" width="${sheetW}mm" height="${sheetH}mm" viewBox="0 0 ${sheetW} ${sheetH}">\n<defs>\n${brandDefsContent}</defs>\n`
+        );
+      }
 
-      // Extract inner content and viewBox from card SVG
-      // Match opening <svg ... viewBox="...">
-      const vbMatch = cardSvg.match(/viewBox="([^"]+)"/);
-      const viewBox = vbMatch ? vbMatch[1] : `-3 -3 ${cell.bleedBox.w} ${cell.bleedBox.h}`;
+      for (let cellIdx = 0; cellIdx < page.cells.length; cellIdx++) {
+        const cell = page.cells[cellIdx];
+        const entry = peopleMap.get(cell.cardId);
+        if (!entry) continue;
 
-      // Extract inner elements between <svg...> and </svg>
-      const innerStart = cardSvg.indexOf(">") + 1;
-      const innerEnd = cardSvg.lastIndexOf("</svg>");
-      let innerSvg = innerStart > 0 && innerEnd > innerStart ? cardSvg.slice(innerStart, innerEnd) : cardSvg;
+        const { person, cardItem } = entry;
+        const pid = cell.cardId;
+        const cardDraft = cardItem?.draft || input.draft;
+        const photoSource = cardItem?.photoSource || input.photoSource;
 
-      // Deduplicate brand logos in card inner SVG:
-      // Replace exact known dataUri with <use href="#defId">
-      for (const logo of brandLogos) {
-        const { result, count } = deduplicateLogoInSvg(innerSvg, logo.dataUri, logo.defId);
-        // Expect exactly 1 replacement per card for that logo
-        if (count !== 1) {
-          return {
-            ok: false,
-            issues: [],
-            errors: [
-              {
-                severity: "error",
-                code: "LOGO_DEDUPE_MISMATCH",
-                message: `Logo deduplication assertion failed: expected 1 replacement for logo "${logo.key}" on card "${cell.cardId}", got ${count}`,
-              },
-            ],
-            warnings: [],
-            reason: `Logo deduplication assertion failed for logo "${logo.key}"`,
-          };
+        // Discover assumed photo box for this draft (one dry run per draft archetype)
+        const draftKey = cardDraft?.look?.id || cardDraft?.skeleton || "default";
+        let assumedBox = draftPhotoBoxCache.get(draftKey);
+        if (!assumedBox && cardDraft) {
+          const dry = renderCard({
+            skeleton: cardDraft.skeleton,
+            blocks: cardDraft.blocks,
+            theme: cardDraft.theme,
+            look: cardDraft.look,
+            person: { id: "dry-run", name: "Sample Person", roleId: layoutFallbackRoleId },
+            brand: input.brand,
+            fonts: input.fonts,
+            event: input.eventSpec,
+            card: {
+              widthMm: settings.card.widthMm,
+              heightMm: settings.card.heightMm,
+              orientation: settings.orientation,
+            },
+            bleedMm: settings.bleedMm,
+          });
+          assumedBox = extractPhotoBoxFromScene(dry.scene);
+          if (assumedBox) {
+            draftPhotoBoxCache.set(draftKey, assumedBox);
+          }
         }
-        innerSvg = result;
+
+        const photoSourceFn =
+          (typeof cardItem?.photoSource === "function" && cardItem.photoSource) ||
+          (typeof input.photoSource === "function" && input.photoSource) ||
+          null;
+
+        let masterPhoto = null;
+        let preparedPhotoUri = person.photo;
+
+        if (photoSourceFn) {
+          try {
+            const tSrc0 = performance.now();
+            const srcResult = await photoSourceFn(pid);
+            photoSourceReadMs += performance.now() - tSrc0;
+            if (srcResult === null) {
+              preparedPhotoUri = null;
+              masterPhoto = null;
+            } else if (!Buffer.isBuffer(srcResult)) {
+              failingPersonIds.push(pid);
+              allErrors.push({
+                severity: "error",
+                code: "PhotoPrepError",
+                message: `[Person ${pid}] PhotoPrepError: photoSource returned a non-Buffer value`,
+              });
+              continue;
+            } else if (srcResult.length === 0) {
+              failingPersonIds.push(pid);
+              allErrors.push({
+                severity: "error",
+                code: "PhotoPrepError",
+                message: `[Person ${pid}] PhotoPrepError: photoSource returned an empty buffer (0 bytes)`,
+              });
+              continue;
+            } else {
+              masterPhoto = srcResult;
+            }
+          } catch (err) {
+            const msg = /** @type {Error} */ (err).message || "photoSource threw an error";
+            failingPersonIds.push(pid);
+            allErrors.push({
+              severity: "error",
+              code: "PhotoPrepError",
+              message: `[Person ${pid}] PhotoPrepError: ${msg}`,
+            });
+            continue;
+          }
+        } else if (person.photo) {
+          masterPhoto = person.photo;
+        }
+
+        const isImageToPrepare =
+          masterPhoto &&
+          (typeof masterPhoto !== "string" || masterPhoto.startsWith("data:"));
+
+        if (isImageToPrepare && assumedBox) {
+          const tP0 = performance.now();
+          try {
+            const prep = await preparePhotoForCard(masterPhoto, {
+              boxWmm: assumedBox.w,
+              boxHmm: assumedBox.h,
+              dpi: settings.dpi,
+              personId: pid,
+            });
+            preparedPhotoUri = prep.dataUri;
+          } catch (err) {
+            const prepErr = /** @type {PhotoPrepError} */ (err);
+            failingPersonIds.push(pid);
+            allErrors.push({
+              severity: "error",
+              code: prepErr.code || "INVALID_PHOTO_DATA",
+              message: prepErr.message,
+            });
+            continue;
+          }
+          photoPrepMs += performance.now() - tP0;
+        }
+
+        const effectivePerson = { ...person, photo: preparedPhotoUri };
+        const renderInput = {
+          skeleton: cardDraft?.skeleton,
+          blocks: cardDraft?.blocks,
+          theme: cardDraft?.theme,
+          look: cardDraft?.look,
+          person: effectivePerson,
+          photoSource,
+          brand: input.brand,
+          fonts: input.fonts,
+          event: input.eventSpec,
+          card: {
+            widthMm: settings.card.widthMm,
+            heightMm: settings.card.heightMm,
+            orientation: settings.orientation,
+          },
+          bleedMm: settings.bleedMm,
+        };
+
+        const tR0 = performance.now();
+        let rendered = renderCard(renderInput);
+        cardRenderMs += performance.now() - tR0;
+
+        const realBox = extractPhotoBoxFromScene(rendered.scene);
+        if (realBox && assumedBox && masterPhoto) {
+          if (
+            Math.abs(assumedBox.w - realBox.w) > 0.01 ||
+            Math.abs(assumedBox.h - realBox.h) > 0.01
+          ) {
+            const tP0 = performance.now();
+            try {
+              const rePrep = await preparePhotoForCard(masterPhoto, {
+                boxWmm: realBox.w,
+                boxHmm: realBox.h,
+                dpi: settings.dpi,
+                personId: pid,
+              });
+              effectivePerson.photo = rePrep.dataUri;
+              renderInput.person = effectivePerson;
+              const tR1 = performance.now();
+              rendered = renderCard(renderInput);
+              cardRenderMs += performance.now() - tR1;
+            } catch (err) {
+              const prepErr = /** @type {PhotoPrepError} */ (err);
+              failingPersonIds.push(pid);
+              allErrors.push({
+                severity: "error",
+                code: prepErr.code || "INVALID_PHOTO_DATA",
+                message: prepErr.message,
+              });
+              continue;
+            }
+            photoPrepMs += performance.now() - tP0;
+          }
+        }
+
+        masterPhoto = null;
+        if (effectivePerson.photo) {
+          totalPreparedPhotoBytes += effectivePerson.photo.length;
+          preparedPhotoCount++;
+        }
+
+        const validIssues = rendered.issues.filter(
+          (i) => !(i.code === "LOGO_DISTORTED" && i.nodeId === "photo")
+        );
+        const tG0 = performance.now();
+        const gateResult = checkExportGate(validIssues, {
+          acknowledgedWarnings: options.acknowledgedWarnings ?? false,
+        });
+        gateCheckMs += performance.now() - tG0;
+
+        if (!gateResult.ok) {
+          failingPersonIds.push(pid);
+          allErrors.push(...gateResult.errors);
+          allWarnings.push(...gateResult.warnings);
+        } else {
+          allWarnings.push(...gateResult.warnings);
+        }
+
+        // If no gate failure yet, format and stream/append cell SVG
+        if (failingPersonIds.length === 0) {
+          let cardSvg = rendered.svg;
+          const vbMatch = cardSvg.match(/viewBox="([^"]+)"/);
+          const viewBox = vbMatch ? vbMatch[1] : `-3 -3 ${cell.bleedBox.w} ${cell.bleedBox.h}`;
+
+          const innerStart = cardSvg.indexOf(">") + 1;
+          const innerEnd = cardSvg.lastIndexOf("</svg>");
+          let innerSvg = innerStart > 0 && innerEnd > innerStart ? cardSvg.slice(innerStart, innerEnd) : cardSvg;
+
+          for (const logo of brandLogos) {
+            const { result, count } = deduplicateLogoInSvg(innerSvg, logo.dataUri, logo.defId);
+            if (count !== 1) {
+              return {
+                ok: false,
+                issues: [],
+                errors: [
+                  {
+                    severity: "error",
+                    code: "LOGO_DEDUPE_MISMATCH",
+                    message: `Logo deduplication assertion failed: expected 1 replacement for logo "${logo.key}" on card "${cell.cardId}", got ${count}`,
+                  },
+                ],
+                warnings: [],
+                reason: `Logo deduplication assertion failed for logo "${logo.key}"`,
+              };
+            }
+            innerSvg = result;
+          }
+
+          const cardPrefix = `p${page.pageIndex}_c${cellIdx}_`;
+          const isolatedInnerSvg = prefixCardSvgIds(innerSvg, cardPrefix, sharedDefIds);
+          const cellSvg = `<svg x="${cell.bleedBox.x}" y="${cell.bleedBox.y}" width="${cell.bleedBox.w}" height="${cell.bleedBox.h}" viewBox="${viewBox}">\n${isolatedInnerSvg}\n</svg>\n`;
+
+          if (isSvg) {
+            currentPageSvg += cellSvg;
+          } else if (writeStream) {
+            await writeChunk(writeStream, cellSvg);
+          }
+        }
       }
 
-      // Condition 1: Apply per-card ID prefixing to prevent ID collisions across 9 cards
-      const cardPrefix = `p${page.pageIndex}_c${cellIdx}_`;
-      const isolatedInnerSvg = prefixCardSvgIds(innerSvg, cardPrefix, sharedDefIds);
-
-      // Place nested <svg> at cell.bleedBox coordinates WITHOUT "mm" (Condition 4)
-      // Never write "mm" on nested x, y, width or height!
-      pageContent += `<svg x="${cell.bleedBox.x}" y="${cell.bleedBox.y}" width="${cell.bleedBox.w}" height="${cell.bleedBox.h}" viewBox="${viewBox}">\n${isolatedInnerSvg}\n</svg>\n`;
-    }
-
-    // 8c. Draw vector crop marks
-    if (page.marks && page.marks.length > 0) {
-      pageContent += `<g id="p${page.pageIndex}_crop-marks">\n`;
-      for (const m of page.marks) {
-        pageContent += `<line x1="${m.x1}" y1="${m.y1}" x2="${m.x2}" y2="${m.y2}" stroke="#000000" stroke-width="${m.strokeMm}" shape-rendering="crispEdges"/>\n`;
+      // Crop marks
+      let marksSvg = "";
+      if (page.marks && page.marks.length > 0) {
+        marksSvg += `<g id="p${page.pageIndex}_crop-marks">\n`;
+        for (const m of page.marks) {
+          marksSvg += `<line x1="${m.x1}" y1="${m.y1}" x2="${m.x2}" y2="${m.y2}" stroke="#000000" stroke-width="${m.strokeMm}" shape-rendering="crispEdges"/>\n`;
+        }
+        marksSvg += `</g>\n`;
       }
-      pageContent += `</g>\n`;
+
+      if (isSvg) {
+        currentPageSvg += `${marksSvg}</svg>`;
+        pageSvgs.push(currentPageSvg);
+      } else if (writeStream && failingPersonIds.length === 0) {
+        await writeChunk(writeStream, `${marksSvg}</svg>\n  </div>\n`);
+      }
     }
 
-    // Top-level sheet SVG: has width and height in mm
-    const sheetSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${sheetW}mm" height="${sheetH}mm" viewBox="0 0 ${sheetW} ${sheetH}">\n${pageContent}</svg>`;
-    pageSvgs.push(sheetSvg);
+    if (writeStream) {
+      if (failingPersonIds.length === 0) {
+        await writeChunk(writeStream, "</body>\n</html>\n");
+      }
+      await new Promise((resolve) => writeStream.end(resolve));
+    }
+  } catch (err) {
+    if (tempDir) {
+      await fs.promises.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+    }
+    throw err;
+  }
+
+  // D-09 gate check result: if ANY card failed, refuse batch with zero browser launch & zero disk output
+  if (failingPersonIds.length > 0) {
+    if (tempDir) {
+      await fs.promises.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+    }
+    return {
+      ok: false,
+      failingPersonIds,
+      issues: allErrors,
+      errors: allErrors,
+      warnings: allWarnings,
+      reason: `Export refused: ${failingPersonIds.length} card(s) failed D-09 gate. Failing person IDs: ${failingPersonIds.join(", ")}`,
+    };
   }
 
   // 9. PHASE 3: Format-specific emission
   const defaultFileName = `sheet-${settings.sheet.paper.toLowerCase()}.${settings.format}`;
   const fileName = options.fileName || defaultFileName;
 
-  if (settings.format === "svg") {
-    // Return single combined SVG or array of page SVGs
+  if (isSvg) {
     const data = pageSvgs.length === 1 ? pageSvgs[0] : pageSvgs.join("\n<!-- PAGE BREAK -->\n");
     if (options.outputPath) {
       await fs.promises.mkdir(path.dirname(options.outputPath), { recursive: true });
@@ -646,58 +676,24 @@ export async function exportSheet(input, settingsInput = {}, options = {}) {
     };
   }
 
-  // Format: PDF via Puppeteer
-  const htmlPages = pageSvgs
-    .map(
-      (svg) => `  <div class="sheet-page">\n${svg}\n  </div>`
-    )
-    .join("\n");
-
-  const fullHtml = `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>ID cards</title>
-<style>
-  @page {
-    size: ${sheetW}mm ${sheetH}mm;
-    margin: 0;
-  }
-  html, body {
-    margin: 0;
-    padding: 0;
-  }
-  .sheet-page {
-    width: ${sheetW}mm;
-    height: ${sheetH}mm;
-    page-break-after: always;
-    break-after: page;
-    box-sizing: border-box;
-    overflow: hidden;
-  }
-  .sheet-page:last-child {
-    page-break-after: avoid;
-    break-after: avoid;
-  }
-  svg {
-    display: block;
-    width: ${sheetW}mm;
-    height: ${sheetH}mm;
-  }
-</style>
-</head>
-<body>
-${htmlPages}
-</body>
-</html>`;
-
+  // Format: PDF via Puppeteer with file-backed delivery (avoids 50MB string in Node heap)
   const svgAssemblyMs = performance.now() - tSvg0;
   const tPrint0 = performance.now();
-  const pdfBuffer = await renderHtmlToPdf(fullHtml, {
-    widthMm: sheetW,
-    heightMm: sheetH,
-    browser: options.browser,
-  });
+  let pdfBuffer;
+  try {
+    if (!tempHtmlPath) {
+      throw new Error("Temporary HTML file path was not established for PDF export");
+    }
+    pdfBuffer = await renderHtmlFileToPdf(tempHtmlPath, {
+      widthMm: sheetW,
+      heightMm: sheetH,
+      browser: options.browser,
+    });
+  } finally {
+    if (tempDir) {
+      await fs.promises.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }
   const chromiumPrintMs = performance.now() - tPrint0;
   const totalMs = performance.now() - tStart;
   const stageSumMs =
