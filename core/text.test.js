@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import opentype from "opentype.js";
-import { fitText, measure, PT_TO_MM, wrap } from "./text.js";
+import { fitText, measure, PT_TO_MM, textToPathData, wrap } from "./text.js";
 import { renderCard } from "./render.js";
 import {
   personLongName,
@@ -473,6 +473,152 @@ describe("core/text engine", () => {
           expect(idNode?.sizeMm).toBe(2); // 5.5 pt clamped step 20 = 2.0 mm
           const nameNode = res.scene.find((n) => n.id === "name");
           expect(nameNode?.sizeMm).toBeGreaterThanOrEqual(9 * PT_TO_MM - 0.05);
+        }
+      }
+    });
+
+    it("ensures textToPathData renders printable ASCII across sizes 5.5 to 16 pt with zero NaN in path data", () => {
+      const allFonts = [
+        opentype.parse(
+          readFileSync(resolve(process.cwd(), "assets/fonts/SpaceGrotesk-Bold.ttf")).buffer,
+        ),
+        opentype.parse(
+          readFileSync(resolve(process.cwd(), "assets/fonts/SourceSerif4-Bold.ttf")).buffer,
+        ),
+        opentype.parse(
+          readFileSync(resolve(process.cwd(), "assets/fonts/Inter-Regular.ttf")).buffer,
+        ),
+        opentype.parse(
+          readFileSync(resolve(process.cwd(), "assets/fonts/SourceSans3-Regular.ttf")).buffer,
+        ),
+      ];
+
+      let ascii = "";
+      for (let c = 32; c <= 126; c++) ascii += String.fromCharCode(c);
+
+      const testStrings = [
+        "A",
+        "HX26-P-001",
+        "ROBOWARS SURAT",
+        "DESIGNSPRINT NIT",
+        "OPENSOURCE CARNIVAL",
+        "Preet Patel",
+        "SVNIT, Surat",
+        ascii,
+      ];
+
+      for (const font of allFonts) {
+        for (let pt10 = 55; pt10 <= 160; pt10 += 5) {
+          const sizeMm = (pt10 / 10) * PT_TO_MM;
+          for (const str of testStrings) {
+            const pData = textToPathData(str, 5.0, 20.0, sizeMm, font);
+            expect(pData.includes("NaN")).toBe(false);
+            expect(pData.length).toBeGreaterThan(0);
+          }
+        }
+      }
+    });
+
+    it("ensures every archetype x mode x every gallery event renders SVG with zero NaN in path d attributes", () => {
+      const galleryEvents = [
+        {
+          name: "HackSurat 2026",
+          tagline: "36-Hour National Student Hackathon",
+          palette: ["#0F172A", "#38BDF8"],
+          venue: "SVNIT Campus, Surat",
+        },
+        {
+          name: "ACM Computing Symposium",
+          tagline: "Advances in Systems and Machine Learning",
+          palette: ["#1E3A2F", "#F5EBE0"],
+          venue: "Central Seminar Hall",
+        },
+        {
+          name: "DesignSprint NIT",
+          tagline: "Product Strategy & UI/UX Sprint",
+          palette: ["#4A154B", "#E01E5A"],
+          venue: "Design Innovation Centre",
+        },
+        {
+          name: "CyberShield Expo",
+          tagline: "Defense, Forensics and Zero-Trust",
+          palette: ["#09090B", "#22C55E"],
+          venue: "Auditorium A",
+        },
+        {
+          name: "ACM Annual Gala",
+          tagline: "Celebrating 15 Years of Excellence",
+          palette: ["#1E1B4B", "#FBBF24"],
+          venue: "Grand Ballroom, Surat",
+        },
+        {
+          name: "AI Horizons Conclave",
+          tagline: "Foundation Models in Production",
+          palette: ["#1E40AF", "#93C5FD"],
+          venue: "Computer Science Dept",
+        },
+        {
+          name: "RoboWars Surat",
+          tagline: "Combat Robotics Championship",
+          palette: ["#7F1D1D", "#F97316"],
+          venue: "Mechanical Quadrangle",
+        },
+        {
+          name: "Women in Tech Surat",
+          tagline: "Empowering Next-Gen Tech Leaders",
+          palette: ["#831843", "#F472B6"],
+          venue: "Student Activity Center",
+        },
+        {
+          name: "OpenSource Carnival",
+          tagline: "Code, Collaborate, and Contribute",
+          palette: ["#064E3B", "#34D399"],
+          venue: "Open Air Theatre",
+        },
+        {
+          name: "FounderSpark Pitch",
+          tagline: "Student Startups Demo Day",
+          palette: ["#312E81", "#A78BFA"],
+          venue: "Incubation Center",
+        },
+      ];
+
+      for (const arch of ARCHETYPES) {
+        for (const mode of MODES) {
+          for (const ev of galleryEvents) {
+            const evSpec = {
+              ...sampleEventSpec,
+              event: {
+                ...sampleEventSpec.event,
+                name: { value: ev.name, source: "user", confirmed: true },
+                tagline: { value: ev.tagline, source: "user", confirmed: true },
+                venue: { value: ev.venue, source: "user", confirmed: true },
+                palette: ev.palette,
+              },
+            };
+            const bundle = compose(evSpec, 1001, arch, mode);
+            const res = renderCard({
+              person: {
+                id: "HX26-P-001",
+                name: "Preet Patel",
+                roleId: "participant",
+                org: "SVNIT",
+              },
+              event: evSpec,
+              brand: sampleBrandKit,
+              card: evSpec.card,
+              fonts,
+              skeleton: bundle.skeleton,
+              blocks: bundle.blocks,
+              theme: bundle.theme,
+              look: bundle.look,
+            });
+
+            const paths = res.svg.match(/<path[^>]*d="[^"]*"/g) || [];
+            for (const p of paths) {
+              expect(p.includes("NaN")).toBe(false);
+            }
+          }
         }
       }
     });

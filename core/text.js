@@ -10,6 +10,52 @@ import opentype from "opentype.js";
 export const PT_TO_MM = 0.3528;
 
 /**
+ * Fixes floating-point epsilon noise near integers (e.g. 13.000000000000002 -> 13).
+ * Prevents opentype.js roundDecimal from parsing "1e-15e+3" and returning NaN.
+ *
+ * @param {number} v
+ * @returns {number}
+ */
+function fixEpsilon(v) {
+  if (typeof v !== "number" || !Number.isFinite(v)) return v;
+  const nearest = Math.round(v);
+  if (Math.abs(v - nearest) < 1e-6) {
+    return nearest;
+  }
+  return v;
+}
+
+/**
+ * Fallback command formatter that guarantees zero NaN tokens in output SVG path data.
+ *
+ * @param {any[]} commands
+ * @returns {string}
+ */
+function formatCommandsWithoutNaN(commands) {
+  let d = "";
+  function fmt(v) {
+    if (typeof v !== "number" || isNaN(v)) return "0";
+    const rounded = Math.round(v * 1000) / 1000;
+    return String(rounded);
+  }
+  for (let i = 0; i < commands.length; i++) {
+    const cmd = commands[i];
+    if (cmd.type === "M") {
+      d += `M${fmt(cmd.x)} ${fmt(cmd.y)}`;
+    } else if (cmd.type === "L") {
+      d += `L${fmt(cmd.x)} ${fmt(cmd.y)}`;
+    } else if (cmd.type === "C") {
+      d += `C${fmt(cmd.x1)} ${fmt(cmd.y1)} ${fmt(cmd.x2)} ${fmt(cmd.y2)} ${fmt(cmd.x)} ${fmt(cmd.y)}`;
+    } else if (cmd.type === "Q") {
+      d += `Q${fmt(cmd.x1)} ${fmt(cmd.y1)} ${fmt(cmd.x)} ${fmt(cmd.y)}`;
+    } else if (cmd.type === "Z") {
+      d += "Z";
+    }
+  }
+  return d;
+}
+
+/**
  * Converts a text line into SVG path data with 3 decimals using opentype.js.
  * Uses manual glyph iteration to handle variable fonts and GSUB substitutions cleanly.
  *
@@ -25,13 +71,22 @@ export function textToPathData(text, x, y, sizeMm, font) {
   try {
     const scale = (1 / (font.unitsPerEm || 1000)) * sizeMm;
     const path = new opentype.Path();
-    let curX = x;
+    let curX = fixEpsilon(x);
+    const cleanY = fixEpsilon(y);
     for (let i = 0; i < text.length; i++) {
       const glyph = font.charToGlyph(text[i]);
       if (glyph && typeof glyph.getPath === "function") {
-        const gPath = glyph.getPath(curX, y, sizeMm);
+        const gPath = glyph.getPath(curX, cleanY, sizeMm);
         if (gPath && Array.isArray(gPath.commands)) {
-          path.commands.push(...gPath.commands);
+          for (const cmd of gPath.commands) {
+            if (cmd.x !== undefined) cmd.x = fixEpsilon(cmd.x);
+            if (cmd.y !== undefined) cmd.y = fixEpsilon(cmd.y);
+            if (cmd.x1 !== undefined) cmd.x1 = fixEpsilon(cmd.x1);
+            if (cmd.y1 !== undefined) cmd.y1 = fixEpsilon(cmd.y1);
+            if (cmd.x2 !== undefined) cmd.x2 = fixEpsilon(cmd.x2);
+            if (cmd.y2 !== undefined) cmd.y2 = fixEpsilon(cmd.y2);
+            path.commands.push(cmd);
+          }
         }
         curX += (glyph.advanceWidth || 0) * scale;
         if (i > 0 && typeof font.getKerningValue === "function") {
@@ -39,9 +94,14 @@ export function textToPathData(text, x, y, sizeMm, font) {
           const kerning = font.getKerningValue(prevGlyph, glyph);
           curX += (kerning || 0) * scale;
         }
+        curX = fixEpsilon(curX);
       }
     }
-    return path.toPathData(3);
+    const pathData = path.toPathData(3);
+    if (!pathData.includes("NaN")) {
+      return pathData;
+    }
+    return formatCommandsWithoutNaN(path.commands);
   } catch (_e) {
     return "";
   }
