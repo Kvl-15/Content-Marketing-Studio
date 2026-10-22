@@ -285,3 +285,83 @@ export function isPaletteCompatible(look, palette) {
 
   return { compatible: true };
 }
+
+/**
+ * Canonical lightness values for default roles ensuring >= 15% separation (spec 9.5).
+ * volunteer (0.86) -> participant (0.68) -> organizer (0.44) -> mentor (0.18)
+ */
+export const DEFAULT_ROLE_LIGHTNESS = /** @type {const} */ ({
+  volunteer: 0.86,
+  participant: 0.68,
+  organizer: 0.44,
+  mentor: 0.18,
+});
+
+/**
+ * 4 lightness steps >= 15% apart for arbitrary or index-based roles.
+ */
+export const DEFAULT_ROLE_LIGHTNESS_STEPS = /** @type {const} */ ([0.86, 0.68, 0.44, 0.18]);
+
+/**
+ * Derives a deterministic default role color from the event palette when
+ * the role color has status "defaulted" or source "default".
+ * Never overrides user-provided role colors. Never mutates eventSpec.
+ *
+ * @param {string} roleId
+ * @param {any} [eventSpec]
+ * @param {number} [roleIndex=0]
+ * @returns {string} 6-digit hex color string
+ */
+export function deriveRoleColor(roleId, eventSpec, roleIndex = 0) {
+  const roleMatch = eventSpec?.roles?.find((/** @type {any} */ r) => r.id === roleId);
+
+  // If role is unresolvable / unknown, return neutral grey (Task R1)
+  if (!roleMatch) {
+    return "#6B7280";
+  }
+
+  // If role color is user-provided/confirmed, never override
+  if (
+    roleMatch?.color?.value &&
+    roleMatch?.color?.status !== "defaulted" &&
+    roleMatch?.color?.source !== "default"
+  ) {
+    return roleMatch.color.value;
+  }
+
+  // Resolve palette
+  const rawPalette =
+    eventSpec?.event?.palette ||
+    eventSpec?.palette;
+
+  // If no palette is provided in the eventSpec, keep existing fallback or neutral grey
+  if (!Array.isArray(rawPalette) || rawPalette.length === 0) {
+    return roleMatch?.color?.value || "#6B7280";
+  }
+
+  let primary = rawPalette[0] || "#0085FF";
+  let [r, g, b] = hexToRgb(primary);
+  let [h, s] = rgbToHsl(r, g, b);
+
+  // If primary is neutral (low saturation), prefer secondary palette color if saturated
+  if (s < 0.15 && rawPalette.length > 1) {
+    const [r2, g2, b2] = hexToRgb(rawPalette[1]);
+    const [h2, s2] = rgbToHsl(r2, g2, b2);
+    if (s2 >= 0.15) {
+      h = h2;
+      s = s2;
+    }
+  }
+
+  // Clamp saturation for clean ID card printing
+  const roleS = s < 0.10 ? 0 : Math.max(0.45, Math.min(0.85, s));
+
+  // Lightness step (canonical map for known roles, index-based modulo for custom roles)
+  const targetL =
+    DEFAULT_ROLE_LIGHTNESS[roleId] ??
+    DEFAULT_ROLE_LIGHTNESS_STEPS[roleIndex % DEFAULT_ROLE_LIGHTNESS_STEPS.length];
+
+  const [nr, ng, nb] = hslToRgb(h, roleS, targetL);
+  return rgbToHex(nr, ng, nb);
+}
+

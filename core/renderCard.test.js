@@ -7,7 +7,7 @@ import {
   sampleBrandKit,
   sampleEventSpec,
 } from "./fixtures.js";
-import { Issue, SceneNode } from "./schemas.js";
+import { SceneNode } from "./schemas.js";
 import { loadContent } from "../scripts/loadContent.js";
 
 const { skeletons, blocks, themes, looks } = loadContent();
@@ -155,6 +155,52 @@ describe("core/renderCard vertical slice", () => {
     expect(errorIssues).toHaveLength(1);
     expect(errorIssues[0].message).toContain("HX26-B-002");
     expect(errorIssues[0].message).toContain("unlisted-role");
+  });
+
+  it("renders a path block element with no issue and no warning, and its output is clipped to the bleed box", () => {
+    const customBlocks = {
+      ...blocks,
+      "custom-art": {
+        id: "custom-art",
+        slot: "art",
+        elements: [
+          {
+            id: "motif-path",
+            type: "path",
+            box: [0, 0, 100, 100],
+            d: "M -3 -3 L 30 -3 L 30 30 L -3 30 Z",
+            fill: "#38BDF8",
+            decor: true,
+          },
+        ],
+      },
+    };
+    const customSkeleton = {
+      ...skeletons.portrait,
+      slots: {
+        ...skeletons.portrait.slots,
+        art: [0, 0, 54, 85.6],
+      },
+    };
+    const customLook = {
+      ...looks["look.bold"],
+      blocks: {
+        ...looks["look.bold"].blocks,
+        art: "custom-art",
+      },
+    };
+    const res = renderCard({
+      ...baseInput,
+      skeleton: customSkeleton,
+      blocks: customBlocks,
+      look: customLook,
+      bleedMm: 3,
+    });
+    expect(res.issues.filter((i) => i.severity === "error")).toEqual([]);
+    expect(res.issues.filter((i) => i.severity === "warning")).toEqual([]);
+    expect(res.svg).toContain('id="motif-path"');
+    expect(res.svg).toContain('clipPath id="bleed-clip-motif-path"');
+    expect(res.svg).toContain('<rect x="-3" y="-3" width="60" height="91.6"');
   });
 });
 

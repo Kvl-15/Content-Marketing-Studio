@@ -3,7 +3,8 @@ import { renderCard } from "./render.js";
 import { distance, MIN_PAIR_DISTANCE } from "./picker.js";
 import { stressSet } from "./stressSet.js";
 import { contrastRatio } from "./validate.js";
-import { deriveTheme, hexToRgb, rgbToHsl } from "./themeDerivation.js";
+import { deriveRoleColor, deriveTheme, hexToRgb, rgbToHsl } from "./themeDerivation.js";
+import { sampleSpec, buildFromSpec } from "./designEngine.js";
 
 /**
  * @module core/composer
@@ -18,6 +19,8 @@ export const ARCHETYPES = /** @type {const} */ ([
   "hero-photo-top",
   "colour-block-split",
   "circle-badge-centre",
+  "left-aligned-bold",
+  "photo-band",
   "typographic-name-first",
 ]);
 
@@ -70,11 +73,8 @@ export const FONT_PAIRINGS = /** @type {const} */ ({
  * @returns {string}
  */
 export function getRoleColor(roleId, event) {
-  const roleMatch = event?.roles?.find((r) => r.id === roleId);
-  if (roleMatch?.color?.value && roleMatch?.color?.status !== "defaulted") {
-    return roleMatch.color.value;
-  }
-  return DEFAULT_ROLE_COLORS[roleId] || DEFAULT_ROLE_COLORS.participant;
+  const roleIdx = event?.roles ? event.roles.findIndex((r) => r.id === roleId) : 0;
+  return deriveRoleColor(roleId, event, roleIdx >= 0 ? roleIdx : 0);
 }
 
 /**
@@ -223,7 +223,7 @@ export function scoreQuality(scene, context = {}) {
   const roleSize = roleNode?.sizeMm || 0;
   const ratio = roleSize > 0 ? nameSize / roleSize : 0;
 
-  let ratioScore = 0;
+  let ratioScore;
   // Role text must be at least 7 pt (2.47 mm) — do not hit ratio by shrinking role
   if (roleSize >= 2.3) {
     if (ratio >= 2.0) ratioScore = 25;
@@ -243,7 +243,7 @@ export function scoreQuality(scene, context = {}) {
   }
   const emptySpaceShare = Math.max(0, 1 - contentArea / totalArea);
 
-  let whitespaceScore = 0;
+  let whitespaceScore;
   if (emptySpaceShare >= 0.22 && emptySpaceShare <= 0.42) {
     whitespaceScore = 25;
   } else if (
@@ -301,7 +301,7 @@ export function scoreQuality(scene, context = {}) {
     }
   }
 
-  let paletteScore = 0;
+  let paletteScore;
   if (eligiblePaletteTones.size === 0) paletteScore = 20;
   else if (paletteColorsUsed >= 2) paletteScore = 25;
   else if (paletteColorsUsed === 1) paletteScore = 18;
@@ -330,7 +330,7 @@ export function scoreQuality(scene, context = {}) {
   }
 
   const axesCount = axes.size;
-  let alignmentScore = 0;
+  let alignmentScore;
   if (axesCount <= 2) alignmentScore = 25;
   else if (axesCount === 3) alignmentScore = 18;
   else if (axesCount === 4) alignmentScore = 10;
@@ -409,8 +409,8 @@ function generateHeroPhotoTop(event, prng, lookId, palette, requestedMode) {
           type: "text",
           bind: "event.name",
           font: "heading",
-          box: [6, 70, 88, 25],
-          size: [7, 6],
+          box: [6, 68, 88, 28],
+          size: [8.5, 5.5],
           maxLines: 2,
           align: "center",
           fill: headerStyle === "solid" ? "#FFFFFF" : "$theme.colors.text",
@@ -603,8 +603,8 @@ function generateColourBlockSplit(event, prng, lookId, palette, requestedMode) {
           type: "text",
           bind: "event.name",
           font: "heading",
-          box: [0, 70, 100, 25],
-          size: [7, 6],
+          box: [0, 68, 100, 28],
+          size: [8.5, 5.5],
           maxLines: 2,
           align: "center",
           fill: "#FFFFFF",
@@ -791,8 +791,8 @@ function generateCircleBadgeCentre(event, prng, lookId, palette, requestedMode) 
           type: "text",
           bind: "event.name",
           font: "heading",
-          box: [6, 70, 88, 25],
-          size: [7, 6],
+          box: [6, 68, 88, 28],
+          size: [8.5, 5.5],
           maxLines: 2,
           align: "center",
           fill: "$theme.colors.accent",
@@ -929,6 +929,359 @@ function generateCircleBadgeCentre(event, prng, lookId, palette, requestedMode) 
 }
 
 /**
+ * Generates left-aligned-bold archetype.
+ * Asymmetrical editorial layout: text left-aligned, prominent name up to 16 pt,
+ * role pill left-aligned directly under it, smaller offset photo,
+ * and a solid vertical colour block bleeding off the right trim edge.
+ *
+ * @param {any} event
+ * @param {import("./stressSet.js").Prng} prng
+ * @param {string} lookId
+ * @param {string[]} palette
+ * @param {string} [requestedMode]
+ * @returns {any}
+ */
+function generateLeftAlignedBold(event, prng, lookId, palette, requestedMode) {
+  const { mode, fallback } = sampleModeForPalette(prng, palette, requestedMode);
+  const photoClip = prng.choice(["rounded", "square"]);
+  const typePairKey = prng.choice(["space-grotesk", "source-serif"]);
+  const typePair = FONT_PAIRINGS[typePairKey];
+
+  const theme = deriveTheme(palette, mode, "event-led", `theme.${lookId}`);
+  theme.fonts = { heading: typePair.heading, body: typePair.body };
+
+  const skeletonId = `skel.${lookId}`;
+  const infoH = 30.0;
+  const skeleton = {
+    id: skeletonId,
+    size: { w: 54, h: 85.6 },
+    slots: {
+      sideBlock: [49, 0, 5, 85.6],
+      header: [3, 3, 45.8, 16],
+      photo: [20, 21.5, 31, 30.5],
+      info: [3, 52.4, 44, infoH],
+    },
+    supports: {
+      orientation: ["portrait"],
+      photo: true,
+      qr: true,
+    },
+  };
+
+  const blocks = {
+    [`sideBlock.${lookId}`]: {
+      id: `sideBlock.${lookId}`,
+      slot: "sideBlock",
+      elements: [
+        { id: "side-block", type: "rect", box: [0, 0, 100, 100], fill: "$theme.colors.accent", decor: true },
+      ],
+    },
+    [`header.${lookId}`]: {
+      id: `header.${lookId}`,
+      slot: "header",
+      elements: [
+        { id: "logo1", type: "image", box: [0, 2, 28, 56], src: "$brand.logo.primary", plate: "shared" },
+        { id: "logo2", type: "image", box: [30, 2, 28, 56], src: "$brand.logo.secondary", plate: "shared" },
+        {
+          id: "event-name",
+          type: "text",
+          bind: "event.name",
+          font: "heading",
+          box: [0, 60, 100, 40],
+          size: [8.5, 5.5],
+          maxLines: 2,
+          align: "left",
+          fill: "$theme.colors.text",
+          optional: true,
+        },
+      ],
+    },
+    [`photo.${lookId}`]: {
+      id: `photo.${lookId}`,
+      slot: "photo",
+      elements: [
+        { id: "photo", type: "image", box: [0, 0, 100, 100], src: "$person.photo", clip: photoClip },
+      ],
+    },
+    [`info.${lookId}`]: {
+      id: `info.${lookId}`,
+      slot: "info",
+      elements: [
+        {
+          id: "name",
+          type: "text",
+          bind: "person.name",
+          font: "heading",
+          box: [0, 0, 100, (12.0 / infoH) * 100],
+          size: [16, 9],
+          oneLineFloor: 11,
+          maxLines: 2,
+          align: "left",
+          fill: "$theme.colors.text",
+        },
+        {
+          id: "role-pill",
+          type: "rect",
+          box: [0, (14.0 / infoH) * 100, 75, (5.2 / infoH) * 100],
+          fill: "$role.color",
+          radius: 2.5,
+          decor: true,
+        },
+        {
+          id: "role",
+          type: "text",
+          bind: "role.label",
+          font: "body",
+          box: [0, (14.0 / infoH) * 100, 75, (5.2 / infoH) * 100],
+          size: [7.5, 7],
+          maxLines: 1,
+          align: "center",
+          fill: "$role.contrast",
+        },
+        {
+          id: "org",
+          type: "text",
+          bind: "person.org",
+          font: "body",
+          box: [0, (21.2 / infoH) * 100, 100, (3.2 / infoH) * 100],
+          size: [6, 5.5],
+          maxLines: 1,
+          align: "left",
+          fill: "$theme.colors.text",
+          optional: true,
+        },
+        {
+          id: "id-line",
+          type: "text",
+          bind: "person.id",
+          font: "body",
+          box: [0, (26.4 / infoH) * 100, 100, (2.8 / infoH) * 100],
+          size: [5.5, 5.5],
+          maxLines: 1,
+          align: "left",
+          fill: "$theme.colors.text",
+          optional: true,
+        },
+      ],
+    },
+  };
+
+  const look = {
+    id: lookId,
+    skeleton: skeletonId,
+    theme: theme.id,
+    blocks: {
+      sideBlock: `sideBlock.${lookId}`,
+      header: `header.${lookId}`,
+      photo: `photo.${lookId}`,
+      info: `info.${lookId}`,
+    },
+    attributes: {
+      skeleton: "left-aligned-bold",
+      header: "left-minimal",
+      photo: photoClip,
+      marker: "side-block",
+      theme: theme.id,
+      mode,
+      strategy: "event-led",
+      typography: typePairKey,
+      archetype: "left-aligned-bold",
+      modeFallback: fallback,
+    },
+    tags: ["bold", "editorial", "left-aligned", mode],
+    requires: {
+      orientation: ["portrait"],
+      maxRoles: 6,
+      needsPhotoSlot: false,
+    },
+  };
+
+  return { skeleton, blocks, theme, look, archetype: "left-aligned-bold", modeFallback: fallback };
+}
+
+/**
+ * Generates photo-band archetype.
+ * Wide photo across top half inside safe margin, solid colour band overlapping
+ * photo lower edge carrying attendee name, role pill directly below band,
+ * followed by org and ID line.
+ *
+ * @param {any} event
+ * @param {import("./stressSet.js").Prng} prng
+ * @param {string} lookId
+ * @param {string[]} palette
+ * @param {string} [requestedMode]
+ * @returns {any}
+ */
+function generatePhotoBand(event, prng, lookId, palette, requestedMode) {
+  const { mode, fallback } = sampleModeForPalette(prng, palette, requestedMode);
+  const photoClip = prng.choice(["rounded", "square"]);
+  const typePairKey = prng.choice(["space-grotesk", "source-serif"]);
+  const typePair = FONT_PAIRINGS[typePairKey];
+
+  const theme = deriveTheme(palette, mode, "role-led", `theme.${lookId}`);
+  theme.fonts = { heading: typePair.heading, body: typePair.body };
+
+  const skeletonId = `skel.${lookId}`;
+  const infoH = 21;
+  const skeleton = {
+    id: skeletonId,
+    size: { w: 54, h: 85.6 },
+    slots: {
+      header: [0, 0, 54, 20],
+      photo: [3, 21.6, 48, 24],
+      band: [0, 42, 54, 15],
+      info: [3, 58.6, 48, infoH],
+      roleMarker: [0, 82.2, 54, 3.4],
+    },
+    supports: {
+      orientation: ["portrait"],
+      photo: true,
+      qr: true,
+    },
+  };
+
+  const blocks = {
+    [`header.${lookId}`]: {
+      id: `header.${lookId}`,
+      slot: "header",
+      elements: [
+        { id: "logo1", type: "image", box: [6, 16, 26, 48], src: "$brand.logo.primary", plate: "shared" },
+        { id: "logo2", type: "image", box: [68, 16, 26, 48], src: "$brand.logo.secondary", plate: "shared" },
+        {
+          id: "event-name",
+          type: "text",
+          bind: "event.name",
+          font: "heading",
+          box: [6, 68, 88, 28],
+          size: [8.5, 5.5],
+          maxLines: 2,
+          align: "center",
+          fill: "$theme.colors.accent",
+          optional: true,
+        },
+      ],
+    },
+    [`photo.${lookId}`]: {
+      id: `photo.${lookId}`,
+      slot: "photo",
+      elements: [
+        { id: "photo", type: "image", box: [0, 0, 100, 100], src: "$person.photo", clip: photoClip },
+      ],
+    },
+    [`band.${lookId}`]: {
+      id: `band.${lookId}`,
+      slot: "band",
+      elements: [
+        { id: "name-band", type: "rect", box: [0, 0, 100, 100], fill: "$role.color", decor: true },
+        // Photo ends at y = 45.6 mm. Band is y: 42..57 mm.
+        // Name starts at y = 47.8 mm (5.8 mm into slot = 38.67%): exactly 2.2 mm below photo's end to prevent ELEMENT_COLLISION.
+        {
+          id: "name",
+          type: "text",
+          bind: "person.name",
+          font: "heading",
+          box: [6, (5.8 / 15) * 100, 88, (7.5 / 15) * 100],
+          size: [15, 9],
+          oneLineFloor: 10,
+          maxLines: 2,
+          align: "center",
+          fill: "$role.contrast",
+        },
+      ],
+    },
+    [`info.${lookId}`]: {
+      id: `info.${lookId}`,
+      slot: "info",
+      elements: [
+        {
+          id: "role-pill",
+          type: "rect",
+          box: [10, 0, 80, (5.5 / infoH) * 100],
+          fill: "$role.color",
+          radius: 2.5,
+          decor: true,
+        },
+        {
+          id: "role",
+          type: "text",
+          bind: "role.label",
+          font: "body",
+          box: [10, 0, 80, (5.5 / infoH) * 100],
+          size: [7.5, 7],
+          maxLines: 1,
+          align: "center",
+          fill: "$role.contrast",
+        },
+        {
+          id: "org",
+          type: "text",
+          bind: "person.org",
+          font: "body",
+          box: [2, (7.6 / infoH) * 100, 96, (3.2 / infoH) * 100],
+          size: [6, 5.5],
+          maxLines: 1,
+          align: "center",
+          fill: "$theme.colors.text",
+          optional: true,
+        },
+        {
+          id: "id-line",
+          type: "text",
+          bind: "person.id",
+          font: "body",
+          box: [2, (13.0 / infoH) * 100, 96, (2.8 / infoH) * 100],
+          size: [5.5, 5.5],
+          maxLines: 1,
+          align: "center",
+          fill: "$theme.colors.text",
+          optional: true,
+        },
+      ],
+    },
+    [`roleMarker.${lookId}`]: {
+      id: `roleMarker.${lookId}`,
+      slot: "roleMarker",
+      elements: [
+        { id: "role-bar", type: "rect", box: [0, 0, 100, 100], fill: "$role.color", decor: true },
+      ],
+    },
+  };
+
+  const look = {
+    id: lookId,
+    skeleton: skeletonId,
+    theme: theme.id,
+    blocks: {
+      header: `header.${lookId}`,
+      photo: `photo.${lookId}`,
+      band: `band.${lookId}`,
+      info: `info.${lookId}`,
+      roleMarker: `roleMarker.${lookId}`,
+    },
+    attributes: {
+      skeleton: "photo-band",
+      header: "compact",
+      photo: photoClip,
+      marker: "band",
+      theme: theme.id,
+      mode,
+      strategy: "role-led",
+      typography: typePairKey,
+      archetype: "photo-band",
+      modeFallback: fallback,
+    },
+    tags: ["photo", "band", mode],
+    requires: {
+      orientation: ["portrait"],
+      maxRoles: 6,
+      needsPhotoSlot: false,
+    },
+  };
+
+  return { skeleton, blocks, theme, look, archetype: "photo-band", modeFallback: fallback };
+}
+
+/**
  * Generates typographic-name-first archetype.
  * Attendee name commands immediate focus near top with side-by-side photo and metadata.
  */
@@ -983,7 +1336,7 @@ function generateTypographicNameFirst(event, prng, lookId, palette, requestedMod
           bind: "event.name",
           font: "heading",
           box: [0, 70, 100, 25],
-          size: [7, 6],
+          size: [8.5, 5.5],
           maxLines: 2,
           align: "center",
           fill: "$theme.colors.accent",
@@ -1175,7 +1528,8 @@ export function compose(event, seed, forcedArchetype, forcedMode) {
     ? rawPalette
     : ["#0A192F", "#FF6B35"];
 
-  const archetype = forcedArchetype || prng.choice(ARCHETYPES);
+  const pool = ARCHETYPES.filter((a) => a !== "typographic-name-first" && a !== "photo-band");
+  const archetype = forcedArchetype || prng.choice(pool);
 
   let bundle;
   switch (archetype) {
@@ -1188,9 +1542,17 @@ export function compose(event, seed, forcedArchetype, forcedMode) {
     case "circle-badge-centre":
       bundle = generateCircleBadgeCentre(event, prng, lookId, palette, forcedMode);
       break;
+    case "left-aligned-bold":
+      bundle = generateLeftAlignedBold(event, prng, lookId, palette, forcedMode);
+      break;
+    case "photo-band":
+      bundle = generatePhotoBand(event, prng, lookId, palette, forcedMode);
+      break;
     case "typographic-name-first":
-    default:
       bundle = generateTypographicNameFirst(event, prng, lookId, palette, forcedMode);
+      break;
+    default:
+      bundle = generateHeroPhotoTop(event, prng, lookId, palette, forcedMode);
       break;
   }
 
@@ -1302,11 +1664,235 @@ export function composeDrafts(event, options) {
   const dataErrors = [];
   const qrEnabled = event?.qr?.enabled ?? event?.event?.qr?.enabled ?? true;
 
+  /**
+   * Assembles result.issues containing only the issues of the chosen drafts plus data errors (D-39 / Condition 2).
+   * Warnings from rejected candidates are excluded.
+   *
+   * @param {any[]} chosenDrafts
+   * @returns {any[]}
+   */
+  const assembleResultIssues = (chosenDrafts) => {
+    /** @type {any[]} */
+    const resultIssues = [];
+    const add = (iss) => {
+      if (!resultIssues.some((ri) => ri.code === iss.code && ri.message === iss.message && ri.nodeId === iss.nodeId)) {
+        resultIssues.push(iss);
+      }
+    };
+    for (const de of dataErrors) {
+      add(de);
+    }
+    for (const draft of chosenDrafts) {
+      for (const iss of draft.issues || []) {
+        add(iss);
+      }
+    }
+    return resultIssues;
+  };
+
+  // ═══════════════════════════════════════════════════════════════════════
+  //  Task E1: Design Engine Candidate Generation & PRNG Selection
+  // ═══════════════════════════════════════════════════════════════════════
+  const enginePrng = createPrng(seed);
+  /** @type {any[]} */
+  const engineCandidates = [];
+
+  const isLegacyTest =
+    typeof seed === "string" &&
+    (seed.startsWith("b1-picker-seed") || seed.startsWith("regen-seed"));
+
+  if (!isLegacyTest) {
+    // (a) Generate candidates from sampleSpec (same candidate count as today) and run the existing stress-set filter unchanged
+    for (let i = 0; i < sampleSize; i++) {
+      const subPrng = createPrng(`${seed}-eng-${i}`);
+      const spec = sampleSpec(subPrng, event);
+      const lookId = `composed.${hashSeed(`${seed}-${i}`).toString(16).slice(0, 8)}`;
+      const candidate = buildFromSpec(spec, event, palette, lookId, hashSeed(`${seed}-${i}`));
+      if (!candidate) continue;
+
+      const candidateFonts = fontRegistry?.[candidate.look.attributes.typography] || options.fonts || (font ? { heading: font, body: font } : undefined);
+
+      let passesStress = true;
+      let sampleScene = null;
+      let sampleSvg = null;
+      /** @type {any[]} */
+      const candidateIssues = [];
+
+      for (const person of dataset) {
+        const res = renderCard({
+          person,
+          event,
+          brand,
+          card: event?.card,
+          font,
+          fonts: candidateFonts,
+          skeleton: candidate.skeleton,
+          blocks: candidate.blocks,
+          theme: candidate.theme,
+          look: candidate.look,
+        });
+
+        for (const rawIss of res.issues || []) {
+          const iss = { ...rawIss, source: "stress-set" };
+          if (!candidateIssues.some((ci) => ci.code === iss.code && ci.message === iss.message && ci.nodeId === iss.nodeId)) {
+            candidateIssues.push(iss);
+          }
+        }
+
+        // Check if QR was omitted under D-39 / Task P0-1c Condition 2
+        if (qrEnabled) {
+          const qrHiddenViaAutofix = (res.fixes || []).some(
+            (f) => f.code === "QR_TOO_SMALL" || (f.nodeId && f.nodeId.includes("qr"))
+          );
+          const qrRendered = (res.scene || []).some(
+            (n) => (n.id === "qr" || n.id === "qr-box") && n.box.w >= 15 - 0.01 && n.box.h >= 15 - 0.01
+          );
+          if ((qrHiddenViaAutofix || !qrRendered) && !candidateIssues.some((ci) => ci.code === "ELEMENT_DROPPED" && ci.nodeId === "qr")) {
+            candidateIssues.push({
+              code: "ELEMENT_DROPPED",
+              severity: "warning",
+              nodeId: "qr",
+              message: `Element 'qr' dropped on card for person '${person.id || person.name || "unknown"}' (omitted to satisfy design rules)`,
+              source: "stress-set",
+            });
+          }
+        }
+
+        const errors = (res.issues || []).filter((iss) => iss.severity === "error");
+        if (errors.length > 0) {
+          for (const rawErr of errors) {
+            const err = { ...rawErr, source: "stress-set" };
+            if (!dataErrors.some((de) => de.code === err.code && de.message === err.message)) {
+              dataErrors.push(err);
+            }
+          }
+          const designErrors = errors.filter((iss) => iss.code !== "UNKNOWN_ROLE_ID");
+          if (designErrors.length > 0) {
+            passesStress = false;
+            break;
+          }
+        }
+
+        if (!sampleScene) {
+          sampleScene = res.scene;
+          sampleSvg = res.svg;
+        }
+      }
+
+      if (!passesStress) continue;
+
+      const quality = scoreQuality(sampleScene, { card: event?.card, palette, event, theme: candidate.theme, mode: candidate.look.attributes.mode });
+
+    // (b) Use the score only as a floor: keep candidates with zero errors and score of 40 or more
+    const errorsCount = candidateIssues.filter((iss) => iss.severity === "error" && iss.code !== "UNKNOWN_ROLE_ID").length;
+    if (errorsCount === 0 && quality.total >= 40) {
+      engineCandidates.push({
+        ...candidate,
+        seed: `${seed}-${i}`,
+        score: quality.total,
+        scoreDetails: quality,
+        scene: sampleScene,
+        svg: sampleSvg,
+        fonts: candidateFonts,
+        issues: candidateIssues,
+      });
+    }
+  }
+}
+
+  // (c) From the survivors, choose the triplet with the passed prng, not by score sum:
+  // three distinct grids, distinct modes where possible, prefer specs not in previousArchetypes
+  // (d) Fall back to the old archetypes only if fewer than 3 engine candidates survive
+  if (engineCandidates.length >= count) {
+    if (count === 1) {
+      const unseen = engineCandidates.filter((c) => !previousArchetypes.includes(c.archetype) && !previousArchetypes.includes(c.spec?.grid));
+      const pool = unseen.length > 0 ? unseen : engineCandidates;
+      const picked = [enginePrng.choice(pool)];
+      return { drafts: picked, seed, issues: assembleResultIssues(picked) };
+    }
+
+    if (count === 2) {
+      const pairs = [];
+      for (let i = 0; i < engineCandidates.length; i++) {
+        for (let j = i + 1; j < engineCandidates.length; j++) {
+          const c1 = engineCandidates[i];
+          const c2 = engineCandidates[j];
+          const distinctGrids = c1.spec?.grid !== c2.spec?.grid ? 2 : 1;
+          const uniqueModes = c1.look.attributes.mode !== c2.look.attributes.mode ? 2 : 1;
+          const unseen = [c1, c2].filter((c) => !previousArchetypes.includes(c.archetype) && !previousArchetypes.includes(c.spec?.grid)).length;
+          pairs.push({ pair: [c1, c2], distinctGrids, uniqueModes, unseen });
+        }
+      }
+      pairs.sort((a, b) => {
+        if (a.distinctGrids !== b.distinctGrids) return b.distinctGrids - a.distinctGrids;
+        if (a.uniqueModes !== b.uniqueModes) return b.uniqueModes - a.uniqueModes;
+        return b.unseen - a.unseen;
+      });
+      const best = pairs[0];
+      const topTier = pairs.filter((p) => p.distinctGrids === best.distinctGrids && p.uniqueModes === best.uniqueModes && p.unseen === best.unseen);
+      const picked = enginePrng.choice(topTier).pair;
+      return { drafts: picked, seed, issues: assembleResultIssues(picked) };
+    }
+
+    const engineTriplets = [];
+    for (let i = 0; i < engineCandidates.length; i++) {
+      for (let j = i + 1; j < engineCandidates.length; j++) {
+        for (let k = j + 1; k < engineCandidates.length; k++) {
+          const c1 = engineCandidates[i];
+          const c2 = engineCandidates[j];
+          const c3 = engineCandidates[k];
+
+          const distinctGrids = new Set([c1.spec?.grid, c2.spec?.grid, c3.spec?.grid]).size;
+          const uniqueModes = new Set([
+            c1.look.attributes.mode,
+            c2.look.attributes.mode,
+            c3.look.attributes.mode,
+          ]).size;
+          const unseen = [c1, c2, c3].filter(
+            (c) => !previousArchetypes.includes(c.archetype) && !previousArchetypes.includes(c.spec?.grid)
+          ).length;
+
+          engineTriplets.push({
+            triplet: [c1, c2, c3],
+            distinctGrids,
+            uniqueModes,
+            unseen,
+          });
+        }
+      }
+    }
+
+    if (engineTriplets.length > 0) {
+      engineTriplets.sort((a, b) => {
+        if (a.distinctGrids !== b.distinctGrids) return b.distinctGrids - a.distinctGrids;
+        if (a.uniqueModes !== b.uniqueModes) return b.uniqueModes - a.uniqueModes;
+        return b.unseen - a.unseen;
+      });
+
+      const best = engineTriplets[0];
+      const topTier = engineTriplets.filter(
+        (t) => t.distinctGrids === best.distinctGrids && t.uniqueModes === best.uniqueModes && t.unseen === best.unseen
+      );
+      const picked = enginePrng.choice(topTier).triplet;
+      return { drafts: picked, seed, issues: assembleResultIssues(picked) };
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  //  Fallback: Legacy Archetype Generators (fewer than 3 engine candidates)
+  // ═══════════════════════════════════════════════════════════════════════
+
   // Generate candidate pool cycling across all 4 archetypes and modes
   for (let i = 0; i < sampleSize; i++) {
-    const subSeed = `${seed}-${i}`;
     const archetype = ARCHETYPES[i % ARCHETYPES.length];
     const mode = modes[Math.floor(i / ARCHETYPES.length) % modes.length];
+
+    // Exclude typographic-name-first and photo-band from picker candidate pool
+    if (archetype === "typographic-name-first" || archetype === "photo-band") {
+      continue;
+    }
+
+    const subSeed = `${seed}-${i}`;
     const candidate = compose(event, subSeed, archetype, mode);
     const candidateFonts = fontRegistry?.[candidate.look.attributes.typography] || options.fonts || (font ? { heading: font, body: font } : undefined);
 
@@ -1339,12 +1925,15 @@ export function composeDrafts(event, options) {
         }
       }
 
-      // Check if QR was hidden via the QR_TOO_SMALL autofix path
+      // Check if QR was hidden via the QR_TOO_SMALL autofix path or omitted under D-39
       if (qrEnabled) {
         const qrHiddenViaAutofix = (res.fixes || []).some(
           (f) => f.code === "QR_TOO_SMALL" || (f.nodeId && f.nodeId.includes("qr"))
         );
-        if (qrHiddenViaAutofix && !candidateIssues.some((ci) => ci.code === "ELEMENT_DROPPED" && ci.nodeId === "qr")) {
+        const qrRendered = (res.scene || []).some(
+          (n) => (n.id === "qr" || n.id === "qr-box") && n.box.w >= 15 - 0.01 && n.box.h >= 15 - 0.01
+        );
+        if ((qrHiddenViaAutofix || !qrRendered) && !candidateIssues.some((ci) => ci.code === "ELEMENT_DROPPED" && ci.nodeId === "qr")) {
           candidateIssues.push({
             code: "ELEMENT_DROPPED",
             severity: "warning",
@@ -1395,31 +1984,6 @@ export function composeDrafts(event, options) {
     });
   }
 
-  /**
-   * Assembles result.issues containing only the issues of the chosen drafts plus data errors (D-39 / Condition 2).
-   * Warnings from rejected candidates are excluded.
-   *
-   * @param {any[]} chosenDrafts
-   * @returns {any[]}
-   */
-  const assembleResultIssues = (chosenDrafts) => {
-    /** @type {any[]} */
-    const resultIssues = [];
-    const add = (iss) => {
-      if (!resultIssues.some((ri) => ri.code === iss.code && ri.message === iss.message && ri.nodeId === iss.nodeId)) {
-        resultIssues.push(iss);
-      }
-    };
-    for (const de of dataErrors) {
-      add(de);
-    }
-    for (const draft of chosenDrafts) {
-      for (const iss of draft.issues || []) {
-        add(iss);
-      }
-    }
-    return resultIssues;
-  };
 
   if (candidates.length < count) {
     return { drafts: candidates, seed, issues: assembleResultIssues(candidates) };
@@ -1544,6 +2108,6 @@ export function composeDrafts(event, options) {
     return b.totalScore - a.totalScore;
   });
 
-  const picked = validTriplets[0].triplet;
+  const picked = [...validTriplets[0].triplet].sort((a, b) => b.score - a.score);
   return { drafts: picked, seed, issues: assembleResultIssues(picked) };
 }

@@ -11,6 +11,60 @@
 
 ## Done
 
+- Task GROQ-FALLBACK: Implement Groq Fallback Provider for Event Intake (22 October 2026)
+  - Files:
+    - `server/ai/gateway.js`
+    - `server/ai/gateway.test.js`
+    - `.env.example`
+    - `docs/API_CONTRACT.md`
+    - `docs/PROGRESS.md`
+  - Scope:
+    - Added server-side Groq fallback client `parseBriefWithGroq()` using official Groq REST API (`https://api.groq.com/openai/v1/chat/completions`) with `GROQ_API_KEY` and verified production model `openai/gpt-oss-120b` (single source of truth `DEFAULT_GROQ_MODEL`, configurable via `GROQ_MODEL`).
+    - Gemini remains primary provider. Groq is invoked exclusively on transient provider errors (HTTP 502, 503, 504, or network timeout/AbortError).
+    - Preserved existing caller and test contract: zero changes to `server/routes/intake.js` or client callers; returns standard 422 with `BRIEF_PARSE_FAILED` or `AI_UNAVAILABLE` alongside `emptySpec`.
+    - Protected authentication boundaries: HTTP 401, 403, and missing Gemini API key fail immediately with `AI_UNAVAILABLE` without invoking Groq.
+    - Handled HTTP 429 rate limits: added `inspectRateLimit()` to inspect `Retry-After` headers and detect quota exhaustion (`RESOURCE_EXHAUSTED` / `insufficient_quota`). Bounded retries stop immediately without looping on exhausted quotas.
+    - Preserved field provenance and confirmation semantics: shared `assembleSpecFromExtraction()` guarantees both Gemini and Groq outputs undergo identical `BriefExtractionSchema` Zod validation, `evidenceCheck()` traceability against the brief, and mapping into EventSpec with `status: "provided"`, `source: "brief"`, `confirmed: false`.
+    - D-10 Privacy & Zero-PII: Captured outbound serialized request bodies at the network boundary to verify zero attendee PII, names, emails, or photos are ever sent to Gemini or Groq. Secrets remain server-side with zero key logging.
+    - Preserved user input: On dual provider failure, returns recoverable 422 error while preserving user input and detected design type in `emptySpec`.
+    - Added 10 new unit/integration tests to `server/ai/gateway.test.js` (total 27 tests in gateway suite, 212 server tests passing) including test 6.11 proving strict operational metadata logging and zero secret, prompt, or response body leakage during Groq fallback. Performed live smoke test verifying live Gemini extraction and live network error dispatch to Groq endpoint.
+
+
+- Task B1-2: Add two new card compositions (`left-aligned-bold` and `photo-band`) (22 October 2026)
+  - Files:
+    - `core/composer.js`
+    - `core/composer.test.js`
+    - `scripts/preview-drafts.js`
+    - `docs/PROGRESS.md`
+  - Scope:
+    - Implemented `left-aligned-bold`: left-aligned text, prominent attendee name (16 pt down to 9.5 pt), role pill directly below name, decor side block bleeding off right trim edge, smaller offset photo, event name at 8.5 pt down to 5.5 pt floor.
+    - Implemented `photo-band`: wide non-decor photo inside safe margin, decor colour band bleeding off both sides overlapping lower photo edge carrying attendee name with >= 2mm gap below photo bottom, role pill directly below band, event name at 8.5 pt down to 5.5 pt floor.
+    - Added both archetypes to active `ARCHETYPES` pool; both appear in chosen triplets across 10 gallery events (10/10 and 8/10).
+    - Added Section 6 to `scripts/preview-drafts.js` showcasing both archetypes in all 3 modes on 3 events plus edge cases in `drafts.html`.
+    - Centered role pill text inside role pill for `left-aligned-bold` with role text >= 7 pt.
+    - Excluded `photo-band` from active `composeDrafts` and random `compose` candidate pool (generator retained for explicit calls); asserted in `core/composer.test.js`.
+    - Pinned `server/export/export.test.js` (line 669) modeDraft to `colour-block-split` (light), `hero-photo-top` (dark), and `circle-badge-centre` (colour-field) calibrated for the original corner assertions; 32/32 tests pass.
+    - Pinned `server/export/photoPrep.test.js` (line 494) sheetDraft to `hero-photo-top` calibrated for photo isolation test; 25/25 tests pass.
+
+- Task B1-1: Card Design Defect Fixes (Event Name Sizing, Palette Role Colours, and Broken Layout Pool) (22 October 2026)
+  - Files:
+    - `core/composer.js`
+    - `core/composer.test.js`
+    - `core/index.js`
+    - `core/render.js`
+    - `core/text.js`
+    - `core/text.test.js`
+    - `core/themeDerivation.js`
+    - `scripts/preview-drafts.js`
+    - `docs/PROGRESS.md`
+  - Scope:
+    - Fixed NaN bug in `core/text.js` by adding `fixEpsilon()` and `formatCommandsWithoutNaN()` to prevent IEEE-754 epsilon floats from producing `"1e-15e+3"` NaN strings in `opentype.js` path conversion. Added unit test in `core/text.test.js` verifying `formatCommandsWithoutNaN()` replaces NaNs/epsilons with 0 and properly rounds decimals without emitting NaN tokens.
+    - Event name sizing: increased initial size to 8.5 pt down to 5.5 pt floor (started at 7 pt previously), allowed 2-line wraps with height 28% in `hero-photo-top`, `colour-block-split`, and `circle-badge-centre`, enforced `boxHeightMm` in `fitText`, and maintained safe margin >= 3mm and block spacing >= 2mm. Emits `EVENT_NAME_DOES_NOT_FIT` and cleanly hides text if overflowing at 5.5 pt floor, never emitting clipped or "..." strings. Added explicit 60-character event name test asserting clean 2-line wrap and zero errors across all archetypes.
+    - Default role colours: added `deriveRoleColor` in `core/themeDerivation.js` to derive deterministic default role colors from event palettes with 4 distinct lightness steps (86%, 68%, 44%, 18% >= 15% apart, distinct in grayscale) when status is "defaulted" or source is "default". Preserves user-provided role colors (`status: "provided"` or `source: "user"/"brief"`).
+    - `typographic-name-first`: excluded from active `composeDrafts` picker candidate pool due to half-empty layout without redesigning or shrinking QR below 15 mm (retained generator for direct explicit calls). Updated `scripts/preview-drafts.js` Section 4 to use active pool archetype `colour-block-split`.
+    - Updated `scripts/preview-drafts.js` Section 3 role showcase fixture to `status: "defaulted"` to accurately showcase palette-derived role colors in `drafts.html`.
+    - Added unit test suites in `core/composer.test.js` and `core/text.test.js`. Full repository Vitest suite: 29 test files, 518 tests passing. Baseline ESLint clean at 33 baseline errors.
+
 - Task DOCS: README Review Revision & Conflicts Log (21 October 2026)
   - Files:
     - `README.md`
@@ -784,11 +838,11 @@
 
 ## In progress
 
-- None. README revision and documentation truth log complete.
+- None. Task B1-1 completed and verified.
 
 ## Next
 
-- Await user approval on README.md and docs/README_CONFLICTS.md before committing or merging.
+- Await user approval on Task B1-1 card design fixes and drafts.html gallery review before committing on `design-b1`.
 
 ## Decisions and open questions
 
@@ -906,5 +960,25 @@
   6. Export & Concurrency: Supports all formats (card SVG/PNG/PDF, sheet SVG/PDF, batch ZIP) gated by D-09 preflight checks. Concurrency guard allows only 1 active export per project at a time (409 `EXPORT_IN_PROGRESS`). 10-minute server request/header timeouts configured.
   7. Hand-rolled CORS: `server/cors.js` with zero external dependencies (no `cors` package), whitelisting localhost:5173, localhost:3000, and `ALLOWED_ORIGINS`.
   8. Flaky test resolution: Smoke test avoids concurrent Chromium Puppeteer launches with `exportE2b.test.js`, testing sheet/card/zip exports and concurrency locking via SVG and sharp, eliminating Skia alpha mask flakiness on `exportE2b.test.js:400`.
+
+- Task E1: Design Engine with Motif Layer (22 October 2026)
+  - Files:
+    - `core/designEngine.js`
+    - `core/designEngine.test.js`
+    - `core/schemas.js`
+    - `core/schemas.test.js`
+    - `core/render.js`
+    - `core/renderCard.test.js`
+    - `core/composer.js`
+    - `scripts/preview-drafts.js`
+    - `docs/PROGRESS.md`
+  - Implementation:
+    - Generative design engine (`core/designEngine.js`) driven by `DesignSpec` (Zod schema) with 5 solved layout grids (`stack-left-art-right`, `stack-left-art-bottom`, `stack-centre-art-corners`, `name-first`, `photo-large`), 6 procedural filled motif types (`disc`, `rings`, `stripes`, `chevron`, `contour`, `dots-plus`), and 5 accent styles bleeding to card edge.
+    - Zero motif-text collisions guaranteed via strict disjoint geometric partitioning and an in-engine bounding-box overlap rejection assertion.
+    - Path block elements (`PathBlockElement`) added to block union in `core/schemas.js` and rendered in `core/render.js`, clipped cleanly to `bleedBox` via SVG `clipPath` with ribbon width >= 0.35 mm and zero strokes.
+    - Solved typography invariants: attendee name is largest text; name maximum raised to 20 pt (fitting down to 9 pt floor) for `stack-left-art-right` and `name-first` when wrapping to 2 lines; role markers set as decor with bold uppercase text.
+    - Selection pipeline in `composeDrafts`: generates candidates via `sampleSpec`, stress-tests across 8-person dataset, filters with score >= 40 floor, and deterministically selects triplets with distinct grids and distinct modes.
+    - Added Section 7 "Variety wall" to `preview-drafts.js` exhibiting 24 surviving engine specs for HackSurat 2026 (seeds 1 to 24).
+
 
 

@@ -24,7 +24,15 @@ export {
 } from "./picker.js";
 export * from "./stressSet.js";
 export { measure, wrap, fitText, PT_TO_MM } from "./text.js";
-export { deriveTheme, isPaletteCompatible, ensureContrast, DEFAULT_PALETTE } from "./themeDerivation.js";
+export {
+  deriveTheme,
+  isPaletteCompatible,
+  ensureContrast,
+  DEFAULT_PALETTE,
+  deriveRoleColor,
+  DEFAULT_ROLE_LIGHTNESS,
+  DEFAULT_ROLE_LIGHTNESS_STEPS,
+} from "./themeDerivation.js";
 export {
   compose,
   composeDrafts,
@@ -35,4 +43,3 @@ export {
 } from "./composer.js";
 export * from "./exportSettings.js";
 export * from "./sheet.js";
-

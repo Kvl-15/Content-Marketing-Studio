@@ -11,7 +11,7 @@ import {
   sampleBrandKit,
   sampleEventSpec,
 } from "./fixtures.js";
-import { compose } from "./composer.js";
+import { ARCHETYPES, compose } from "./composer.js";
 import { loadContent } from "../scripts/loadContent.js";
 
 const { skeletons, blocks, themes } = loadContent();
@@ -477,49 +477,55 @@ describe("core/text engine", () => {
       }
     });
 
-    it("ensures textToPathData renders printable ASCII across sizes 5.5 to 16 pt with zero NaN in path data", () => {
-      const allFonts = [
-        opentype.parse(
-          readFileSync(resolve(process.cwd(), "assets/fonts/SpaceGrotesk-Bold.ttf")).buffer,
-        ),
-        opentype.parse(
-          readFileSync(resolve(process.cwd(), "assets/fonts/SourceSerif4-Bold.ttf")).buffer,
-        ),
-        opentype.parse(
-          readFileSync(resolve(process.cwd(), "assets/fonts/Inter-Regular.ttf")).buffer,
-        ),
-        opentype.parse(
-          readFileSync(resolve(process.cwd(), "assets/fonts/SourceSans3-Regular.ttf")).buffer,
-        ),
-      ];
+    it(
+      "ensures textToPathData renders printable ASCII across sizes 5.5 to 16 pt with zero NaN in path data",
+      () => {
+        const allFonts = [
+          opentype.parse(
+            readFileSync(resolve(process.cwd(), "assets/fonts/SpaceGrotesk-Bold.ttf")).buffer,
+          ),
+          opentype.parse(
+            readFileSync(resolve(process.cwd(), "assets/fonts/SourceSerif4-Bold.ttf")).buffer,
+          ),
+          opentype.parse(
+            readFileSync(resolve(process.cwd(), "assets/fonts/Inter-Regular.ttf")).buffer,
+          ),
+          opentype.parse(
+            readFileSync(resolve(process.cwd(), "assets/fonts/SourceSans3-Regular.ttf")).buffer,
+          ),
+        ];
 
-      let ascii = "";
-      for (let c = 32; c <= 126; c++) ascii += String.fromCharCode(c);
+        let ascii = "";
+        for (let c = 32; c <= 126; c++) ascii += String.fromCharCode(c);
 
-      const testStrings = [
-        "A",
-        "HX26-P-001",
-        "ROBOWARS SURAT",
-        "DESIGNSPRINT NIT",
-        "OPENSOURCE CARNIVAL",
-        "Preet Patel",
-        "SVNIT, Surat",
-        ascii,
-      ];
+        const testStrings = [
+          "A",
+          "HX26-P-001",
+          "ROBOWARS SURAT",
+          "DESIGNSPRINT NIT",
+          "OPENSOURCE CARNIVAL",
+          "Preet Patel",
+          "SVNIT, Surat",
+          ascii,
+        ];
 
-      for (const font of allFonts) {
-        for (let pt10 = 55; pt10 <= 160; pt10 += 5) {
-          const sizeMm = (pt10 / 10) * PT_TO_MM;
-          for (const str of testStrings) {
-            const pData = textToPathData(str, 5.0, 20.0, sizeMm, font);
-            expect(pData.includes("NaN")).toBe(false);
-            expect(pData.length).toBeGreaterThan(0);
+        for (const font of allFonts) {
+          for (let pt10 = 55; pt10 <= 160; pt10 += 5) {
+            const sizeMm = (pt10 / 10) * PT_TO_MM;
+            for (const str of testStrings) {
+              const pData = textToPathData(str, 5.0, 20.0, sizeMm, font);
+              expect(pData.includes("NaN")).toBe(false);
+              expect(pData.length).toBeGreaterThan(0);
+            }
           }
         }
-      }
-    });
+      },
+      20000,
+    );
 
-    it("ensures every archetype x mode x every gallery event renders SVG with zero NaN in path d attributes", () => {
+    it(
+      "ensures every archetype x mode x every gallery event renders SVG with zero NaN in path d attributes",
+      () => {
       const galleryEvents = [
         {
           name: "HackSurat 2026",
@@ -620,6 +626,117 @@ describe("core/text engine", () => {
             }
           }
         }
+      }
+    }, 20000);
+
+    describe("formatCommandsWithoutNaN", () => {
+      // Extract formatCommandsWithoutNaN from core/text.js source to test directly without mutating core/text.js
+      const textJsSrc = readFileSync(
+        resolve(process.cwd(), "core/text.js"),
+        "utf8",
+      );
+      const fnMatch = textJsSrc.match(
+        /function formatCommandsWithoutNaN\([\s\S]*?\n\}/,
+      );
+      const formatCommandsWithoutNaN = fnMatch
+        ? new Function(`${fnMatch[0]}; return formatCommandsWithoutNaN;`)()
+        : null;
+
+      it("feeds commands that would produce NaN and asserts output never contains NaN and numbers are correctly rounded", () => {
+        expect(typeof formatCommandsWithoutNaN).toBe("function");
+
+        const pathologicalCommands = [
+          // M command with explicit NaN and epsilon floating point noise
+          { type: "M", x: NaN, y: 1.7763568394002505e-15 },
+          // L command with fractional values requiring rounding, and NaN coordinate
+          { type: "L", x: 10.123456, y: NaN },
+          // C command with mixed NaNs, sub-epsilon numbers, and multi-decimal coords
+          {
+            type: "C",
+            x1: NaN,
+            y1: 20.55555,
+            x2: 30.1,
+            y2: NaN,
+            x: 40.9999,
+            y: -0,
+          },
+          // Q command with NaNs and unrounded floats
+          { type: "Q", x1: NaN, y1: NaN, x: 60.1234, y: 70.8888 },
+          // Z closepath
+          { type: "Z" },
+        ];
+
+        const pathData = formatCommandsWithoutNaN(pathologicalCommands);
+
+        // Assert zero "NaN" tokens appear in the SVG path data
+        expect(pathData).not.toContain("NaN");
+
+        // Assert numbers are correctly rounded to at most 3 decimal places
+        // 10.123456 -> 10.123
+        expect(pathData).toContain("L10.123 0");
+        // 20.55555 -> 20.556, 40.9999 -> 41
+        expect(pathData).toContain("C0 20.556 30.1 0 41 0");
+        // 60.1234 -> 60.123, 70.8888 -> 70.889
+        expect(pathData).toContain("Q0 0 60.123 70.889");
+        // M command replaced NaN and 1e-15 with 0
+        expect(pathData.startsWith("M0 0")).toBe(true);
+        expect(pathData.endsWith("Z")).toBe(true);
+      });
+
+      it("handles all standard SVG command types gracefully with zero or empty input", () => {
+        expect(formatCommandsWithoutNaN([])).toBe("");
+        expect(
+          formatCommandsWithoutNaN([
+            { type: "M", x: 12.3, y: 45.6 },
+            { type: "Z" },
+          ]),
+        ).toBe("M12.3 45.6Z");
+      });
+    });
+  });
+
+  describe("60-character event name fit", () => {
+    it("event name with exactly 60 characters fits without clipping, truncation or EVENT_NAME_DOES_NOT_FIT across all archetypes", () => {
+      const eventName60 =
+        "ACM International Conference on Ubiquitous Systems Computing";
+      expect(eventName60.length).toBe(60);
+
+      const ev60 = {
+        ...sampleEventSpec,
+        event: {
+          ...sampleEventSpec.event,
+          name: eventName60,
+        },
+      };
+
+      for (const archetype of ARCHETYPES) {
+        const bundle = compose(ev60, `seed-60-${archetype}`, archetype);
+        const res = renderCard({
+          person: personNormal,
+          event: ev60,
+          brand: sampleBrandKit,
+          font: testFont,
+          ...bundle,
+        });
+
+        const evNode = res.scene.find(
+          (n) => n.bind === "event.name" || n.id === "event-name",
+        );
+        expect(evNode).toBeDefined();
+        // Event name must never be truncated or clipped
+        expect(evNode.lines.join(" ")).not.toContain("...");
+        expect(evNode.lines.length).toBeLessThanOrEqual(2);
+        // Size must stay at or above the 5.5 pt floor
+        const sizePt = evNode.sizeMm / PT_TO_MM;
+        expect(sizePt).toBeGreaterThanOrEqual(5.5);
+        // Validator issues must contain zero clipping or truncation errors
+        const badIssues = res.issues.filter(
+          (i) =>
+            i.code === "TEXT_TRUNCATED" ||
+            i.code === "EVENT_NAME_DOES_NOT_FIT" ||
+            i.code === "TEXT_OVERFLOW",
+        );
+        expect(badIssues).toHaveLength(0);
       }
     });
   });

@@ -269,11 +269,23 @@ export const TextBlockElement = z.object({
   }
 );
 
+/** Path element inside a block (decorative shapes, motifs). */
+export const PathBlockElement = z.object({
+  id:       z.string().min(1),
+  type:     z.literal("path"),
+  box:      BoxTuple,
+  d:        z.string(),
+  fill:     z.string(),
+  decor:    z.boolean().optional(),
+  optional: z.boolean().optional(),
+});
+
 /** Any element inside a block (discriminated on "type"). */
 export const BlockElement = z.discriminatedUnion("type", [
   RectBlockElement,
   ImageBlockElement,
   TextBlockElement,
+  PathBlockElement,
 ]);
 
 /**

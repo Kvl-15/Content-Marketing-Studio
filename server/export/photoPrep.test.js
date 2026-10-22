@@ -491,11 +491,9 @@ describe("E2c: Real Photos in Export (photoPrep, clipping, memory, safety)", () 
           { r: 30, g: 140, b: 30 }, // 9: Dark Green
         ];
 
-        const draftsResult = composeDrafts(sampleEventSpec, {
-          brand: brandWithLogos,
-          qrEnabled: false,
-          seed: 1234,
-        });
+        // Pinned to hero-photo-top archetype which this photo isolation test was written for
+        const cardDraft = compose(sampleEventSpec, 1234, "hero-photo-top", "light");
+        const draftsResult = { drafts: [cardDraft] };
 
         const cards = [];
         for (let i = 0; i < 9; i++) {

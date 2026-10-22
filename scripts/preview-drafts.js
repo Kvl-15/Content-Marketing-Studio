@@ -9,7 +9,9 @@ import {
   sampleEventSpec,
 } from "../core/fixtures.js";
 import { renderCard } from "../core/render.js";
-import { compose, composeDrafts, DEFAULT_ROLE_COLORS, scoreQuality } from "../core/composer.js";
+import { compose, composeDrafts, createPrng, DEFAULT_ROLE_COLORS, scoreQuality } from "../core/composer.js";
+import { sampleSpec, buildFromSpec } from "../core/designEngine.js";
+import { stressSet } from "../core/stressSet.js";
 import { loadContent } from "./loadContent.js";
 
 // Load fonts
@@ -55,22 +57,32 @@ const bleedMm = hasBleed ? 3 : 0;
 function renderPreviewCard(params) {
   return renderCard({
     ...params,
-    ...(hasBleed ? { bleedMm: 3 } : {}),
+    ...(hasBleed ? { bleedMm } : {}),
   });
 }
+
+let cardContainerCounter = 0;
 
 /**
  * Emits the SVG container. In --bleed mode, corners are not round-clipped
  * and a dashed green trim overlay is positioned directly against the SVG's box.
+ * Prefixes all IDs within the card SVG to prevent ID collisions (such as clip-photo)
+ * across multiple SVGs on the same HTML page.
  *
  * @param {{ svg: string }} cardRender
  * @returns {string}
  */
 function renderCardContainer(cardRender) {
+  const prefix = `c${++cardContainerCounter}_`;
+  const scopedSvg = cardRender.svg
+    .replace(/\bid="([^"]+)"/g, `id="${prefix}$1"`)
+    .replace(/url\(#([^)]+)\)/g, `url(#${prefix}$1)`)
+    .replace(/\b(href|xlink:href)="#([^"]+)"/g, `$1="#${prefix}$2"`);
+
   if (hasBleed) {
-    return `<div class="svg-container bleed-mode">${cardRender.svg}<div class="trim-overlay" aria-hidden="true" title="Trim boundary (54 x 85.6 mm)"></div></div>`;
+    return `<div class="svg-container bleed-mode">${scopedSvg}<div class="trim-overlay" aria-hidden="true" title="Trim boundary (54 x 85.6 mm)"></div></div>`;
   }
-  return `<div class="svg-container">${cardRender.svg}</div>`;
+  return `<div class="svg-container">${scopedSvg}</div>`;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -512,7 +524,6 @@ html += `
 html += `<h2 class="section-title">3. Role Differentiation & Grayscale Lightness (4 Lightness Steps)</h2>
 <div class="section-desc">Default role colours have 4 lightness steps >= 15% apart. Roles also have a role-coloured edge bar (>= 3mm). Click "Toggle Grayscale Mode" above to verify clear contrast in black & white.</div>`;
 
-const roleCardsEv = showcaseEvents[0];
 const rolesShowcase = [
   { id: "volunteer", label: "VOLUNTEER", color: DEFAULT_ROLE_COLORS.volunteer, lightness: "86%" },
   { id: "participant", label: "PARTICIPANT", color: DEFAULT_ROLE_COLORS.participant, lightness: "68%" },
@@ -536,7 +547,7 @@ for (let rIdx = 0; rIdx < rolesShowcase.length; rIdx++) {
 
   const roleEventSpec = {
     ...singleEventSpec,
-    roles: [{ id: r.id, label: r.label, expectedCount: 20, color: { value: r.color } }],
+    roles: [{ id: r.id, label: r.label, expectedCount: 20, color: { value: r.color, status: "defaulted", source: "default" } }],
   };
 
   const cardRender = renderPreviewCard({
@@ -551,13 +562,15 @@ for (let rIdx = 0; rIdx < rolesShowcase.length; rIdx++) {
     look: sampleDraft.look,
   });
 
+  const renderedRoleColor = cardRender.scene.find((n) => n.id === "role-pill" || n.id === "role-bar")?.fill || r.color;
+
   html += `
     <div class="card-cell">
       ${renderCardContainer(cardRender)}
       <div class="card-meta">
         <div><span>Role:</span> <strong>${r.label}</strong></div>
         <div><span>Lightness:</span> <code>${r.lightness} L</code></div>
-        <div><span>Pill / Bar:</span> <span style="display:inline-block;width:12px;height:12px;background:${r.color};border-radius:2px;vertical-align:middle;"></span> <code>${r.color}</code></div>
+        <div><span>Pill / Bar:</span> <span style="display:inline-block;width:12px;height:12px;background:${renderedRoleColor};border-radius:2px;vertical-align:middle;"></span> <code>${renderedRoleColor}</code></div>
       </div>
     </div>
   `;
@@ -574,7 +587,7 @@ html += `
 html += `<h2 class="section-title">4. Edge Cases Showcase (No Photo, Missing Org, Missing ID, Long Name)</h2>
 <div class="section-desc">Priority when space is tight: drop QR first, then org, then ID line. Missing values cleanly hide with no layout gaps.</div>`;
 
-const edgeDraft = compose(singleEventSpec, 777, "typographic-name-first");
+const edgeDraft = compose(singleEventSpec, 777, "colour-block-split");
 
 // Case 1: No Photo
 const renderNoPhoto = renderPreviewCard({
@@ -752,6 +765,327 @@ html += `
         <div class="chip-container"><span class="chip">L &ge; 0.88</span></div>
       </div>
     </div>
+  </div>
+</div>
+`;
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Section 6: Task B1-2 New Archetypes Showcase
+// ═══════════════════════════════════════════════════════════════════════
+html += `<h2 class="section-title">6. Task B1-2 new archetypes</h2>
+<div class="section-desc">Exhibition of the two new card compositions ("left-aligned-bold" and "photo-band") across 3 events in all 3 modes (light, dark, colour-field), plus robustness edge cases (no photo, 57-char long name, missing org/ID).</div>`;
+
+const b12Events = [
+  showcaseEvents.find((e) => e.name.includes("HackSurat")) || showcaseEvents[0],
+  showcaseEvents.find((e) => e.name.includes("RoboWars")) || showcaseEvents[2],
+  showcaseEvents.find((e) => e.name.includes("Gala")) || showcaseEvents[9],
+];
+
+const b12Archetypes = [
+  { id: "left-aligned-bold", title: "Left-Aligned Bold (Dominant Name, Asymmetric Editorial Block)" },
+  { id: "photo-band", title: "Photo Band (Safe-Margin Photo, Bleeding Overlapping Colour Band)" },
+];
+
+const b12Modes = ["light", "dark", "colour-field"];
+
+for (const ev of b12Events) {
+  const eventSpec = {
+    ...sampleEventSpec,
+    event: {
+      ...sampleEventSpec.event,
+      name: { value: ev.name, source: "user", confirmed: true },
+      tagline: { value: ev.tagline, source: "user", confirmed: true },
+      venue: { value: ev.venue, source: "user", confirmed: true },
+      palette: ev.palette,
+    },
+  };
+
+  html += `
+  <div class="event-card">
+    <div class="event-header">
+      <div>
+        <div class="event-title">${ev.name} — Task B1-2 Compositions</div>
+        <div class="event-tagline">${ev.tagline} • ${ev.venue}</div>
+      </div>
+      <div class="palette-swatches">
+        ${ev.palette.map((c) => `<div class="swatch" style="background:${c};" title="${c}"></div>`).join("")}
+      </div>
+    </div>`;
+
+  for (const arch of b12Archetypes) {
+    html += `
+    <div style="padding: 12px 20px 4px; font-size: 13px; font-weight: 600; color: #475569; text-transform: uppercase; letter-spacing: 0.05em;">
+      Archetype: ${arch.title}
+    </div>
+    <div class="drafts-row">`;
+
+    for (let mIdx = 0; mIdx < b12Modes.length; mIdx++) {
+      const mode = b12Modes[mIdx];
+      const draft = compose(eventSpec, `b12-${ev.name}-${arch.id}-${mode}`, arch.id, mode);
+      const cardRender = renderPreviewCard({
+        person: { ...personNormal, photo: avatars[mIdx % avatars.length] },
+        event: eventSpec,
+        brand: activeBrandKit,
+        card: eventSpec.card,
+        font,
+        skeleton: draft.skeleton,
+        blocks: draft.blocks,
+        theme: draft.theme,
+        look: draft.look,
+      });
+
+      html += `
+      <div class="card-cell">
+        ${renderCardContainer(cardRender)}
+        <div class="card-meta">
+          <div><span>Archetype:</span> <strong>${arch.id}</strong></div>
+          <div><span>Mode:</span> <strong>${mode}</strong></div>
+          <div class="chip-container">
+            <span class="chip">${draft.look.attributes.typography}</span>
+            <span class="chip" style="background:${mode === "dark" ? "#1E293B" : mode === "colour-field" ? "#0F766E" : "#F1F5F9"}; color:${mode === "light" ? "#334155" : "#FFFFFF"};">${mode}</span>
+          </div>
+        </div>
+      </div>`;
+    }
+
+    html += `</div>`;
+  }
+
+  html += `</div>`;
+}
+
+// Edge Cases for each new archetype
+html += `
+<div class="event-card">
+  <div class="event-header">
+    <div class="event-title">Task B1-2 New Archetypes: Edge Cases (No Photo, 57-char Name, Missing Org/ID)</div>
+  </div>`;
+
+for (const arch of b12Archetypes) {
+  const edgeSpec = {
+    ...sampleEventSpec,
+    event: {
+      ...sampleEventSpec.event,
+      name: { value: b12Events[0].name, source: "user", confirmed: true },
+      palette: b12Events[0].palette,
+    },
+  };
+
+  const draft = compose(edgeSpec, `b12-edge-${arch.id}`, arch.id, "light");
+
+  const rNoPhoto = renderPreviewCard({
+    person: { ...personNormal, photo: null },
+    event: edgeSpec,
+    brand: activeBrandKit,
+    card: edgeSpec.card,
+    font,
+    skeleton: draft.skeleton,
+    blocks: draft.blocks,
+    theme: draft.theme,
+    look: draft.look,
+  });
+
+  const rLongName = renderPreviewCard({
+    person: personLongName,
+    event: edgeSpec,
+    brand: activeBrandKit,
+    card: edgeSpec.card,
+    font,
+    skeleton: draft.skeleton,
+    blocks: draft.blocks,
+    theme: draft.theme,
+    look: draft.look,
+  });
+
+  const rMissingOrgId = renderPreviewCard({
+    person: { ...personNormal, id: "", org: undefined, photo: avatars[0] },
+    event: edgeSpec,
+    brand: activeBrandKit,
+    card: edgeSpec.card,
+    font,
+    skeleton: draft.skeleton,
+    blocks: draft.blocks,
+    theme: draft.theme,
+    look: draft.look,
+  });
+
+  html += `
+  <div style="padding: 12px 20px 4px; font-size: 13px; font-weight: 600; color: #475569; text-transform: uppercase; letter-spacing: 0.05em;">
+    Edge Cases: ${arch.title}
+  </div>
+  <div class="drafts-row">
+    <div class="card-cell">
+      ${renderCardContainer(rNoPhoto)}
+      <div class="card-meta">
+        <div><span>Archetype:</span> <strong>${arch.id}</strong></div>
+        <div><span>Edge Case:</span> <strong>No Photo</strong></div>
+        <div class="chip-container"><span class="chip">fallback placeholder</span></div>
+      </div>
+    </div>
+    <div class="card-cell">
+      ${renderCardContainer(rLongName)}
+      <div class="card-meta">
+        <div><span>Archetype:</span> <strong>${arch.id}</strong></div>
+        <div><span>Edge Case:</span> <strong>57-Char Long Name</strong></div>
+        <div class="chip-container"><span class="chip">2-line fit floor</span></div>
+      </div>
+    </div>
+    <div class="card-cell">
+      ${renderCardContainer(rMissingOrgId)}
+      <div class="card-meta">
+        <div><span>Archetype:</span> <strong>${arch.id}</strong></div>
+        <div><span>Edge Case:</span> <strong>Missing Org & ID</strong></div>
+        <div class="chip-container"><span class="chip">cleanly omitted</span></div>
+      </div>
+    </div>
+  </div>`;
+}
+
+html += `</div>`;
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Section 7: Variety Wall (24 Surviving Engine Specs for HackSurat 2026)
+// ═══════════════════════════════════════════════════════════════════════
+html += `<h2 class="section-title">7. Variety Wall (24 Surviving Engine Specs for HackSurat 2026)</h2>
+<div class="section-desc">24 surviving design engine candidates across seeds 1 to 24 for HackSurat 2026 in a dense grid, each labelled with its spec parameters. All candidates pass the 8-person stress-set and meet the quality floor (&ge; 40).</div>`;
+
+const hackSuratEv = showcaseEvents.find((e) => e.name.includes("HackSurat")) || showcaseEvents[0];
+const hackSuratSpec = {
+  ...sampleEventSpec,
+  event: {
+    ...sampleEventSpec.event,
+    name: { value: hackSuratEv.name, source: "user", confirmed: true },
+    tagline: { value: hackSuratEv.tagline, source: "user", confirmed: true },
+    venue: { value: hackSuratEv.venue, source: "user", confirmed: true },
+    palette: hackSuratEv.palette,
+  },
+};
+
+const disqualifyingIssues = {};
+let varietySampled = 0;
+let varietySurvived = 0;
+const varietyCards = [];
+
+for (let s = 1; s <= 24; s++) {
+  varietySampled++;
+  const prng = createPrng(s);
+  const spec = sampleSpec(prng, hackSuratSpec);
+  const candidate = buildFromSpec(spec, hackSuratSpec, hackSuratEv.palette, `variety-${s}`);
+
+  if (!candidate) {
+    disqualifyingIssues["BUILD_FAILED"] = (disqualifyingIssues["BUILD_FAILED"] || 0) + 1;
+    continue;
+  }
+
+  let passesStress = true;
+  let sampleScene = null;
+  const avatar = avatars[(s - 1) % avatars.length];
+  const typeKey = candidate.look.attributes.typography;
+  const activeFonts = fontRegistry[typeKey] || fontRegistry.default;
+
+  for (const person of stressSet) {
+    const res = renderPreviewCard({
+      person,
+      event: hackSuratSpec,
+      brand: activeBrandKit,
+      card: hackSuratSpec.card,
+      font,
+      fonts: activeFonts,
+      skeleton: candidate.skeleton,
+      blocks: candidate.blocks,
+      theme: candidate.theme,
+      look: candidate.look,
+    });
+    const errors = (res.issues || []).filter((iss) => iss.severity === "error" && iss.code !== "UNKNOWN_ROLE_ID");
+    if (errors.length > 0) {
+      passesStress = false;
+      for (const err of errors) {
+        disqualifyingIssues[err.code] = (disqualifyingIssues[err.code] || 0) + 1;
+      }
+      break;
+    }
+    if (!sampleScene) sampleScene = res.scene;
+  }
+
+  if (!passesStress) continue;
+
+  const quality = scoreQuality(sampleScene, {
+    card: hackSuratSpec.card,
+    palette: hackSuratEv.palette,
+    event: hackSuratSpec,
+    theme: candidate.theme,
+    mode: candidate.look.attributes.mode,
+  });
+
+  if (quality.total < 40) {
+    disqualifyingIssues["SCORE_BELOW_40"] = (disqualifyingIssues["SCORE_BELOW_40"] || 0) + 1;
+    continue;
+  }
+
+  varietySurvived++;
+
+  const previewRender = renderPreviewCard({
+    person: { ...personNormal, photo: avatar },
+    event: hackSuratSpec,
+    brand: activeBrandKit,
+    card: hackSuratSpec.card,
+    font,
+    fonts: activeFonts,
+    skeleton: candidate.skeleton,
+    blocks: candidate.blocks,
+    theme: candidate.theme,
+    look: candidate.look,
+  });
+
+  varietyCards.push({
+    seed: s,
+    spec,
+    candidate,
+    render: previewRender,
+    quality,
+  });
+}
+
+const top5Issues = Object.entries(disqualifyingIssues)
+  .sort((a, b) => b[1] - a[1])
+  .slice(0, 5)
+  .map(([code, count]) => `${code}: ${count}`)
+  .join(", ");
+
+console.log(`Variety wall: ${varietySampled} specs sampled, ${varietySurvived} survived. Top 5 disqualifying issues: ${top5Issues || "none"}`);
+
+html += `
+<div class="event-card">
+  <div class="event-header">
+    <div>
+      <div class="event-title">HackSurat 2026 — Variety Wall (24 Specs)</div>
+      <div class="event-tagline">Seeds 1–24 • Solved Grids • Procedural Motifs • Bleed Accents</div>
+    </div>
+  </div>
+  <div class="drafts-row" style="gap: 16px;">
+`;
+
+for (const vc of varietyCards) {
+  const { seed, spec, render, quality } = vc;
+  const scoreClass = quality.total >= 80 ? "score-high" : quality.total >= 60 ? "score-mid" : "score-low";
+  html += `
+    <div class="card-cell" style="width: 164px; padding: 10px;">
+      ${renderCardContainer(render)}
+      <div class="card-meta" style="font-size: 10px;">
+        <div><span>Seed:</span> <code>${seed}</code></div>
+        <div><span>Grid:</span> <strong>${spec.grid}</strong></div>
+        <div><span>Motif:</span> <code>${spec.motif} (${spec.motifScale}/${spec.motifAnchor})</code></div>
+        <div><span>Accent:</span> <code>${spec.accent}</code></div>
+        <div><span>Photo:</span> <code>${spec.photoShape} (${spec.photoSize})</code></div>
+        <div><span>Marker:</span> <code>${spec.roleMarker}</code></div>
+        <div><span>Mode:</span> <code>${spec.mode}</code></div>
+        <div><span>Score:</span> <span class="badge-score ${scoreClass}" style="font-size: 9px; padding: 1px 5px;">${quality.total}/100</span></div>
+      </div>
+    </div>
+  `;
+}
+
+html += `
   </div>
 </div>
 `;

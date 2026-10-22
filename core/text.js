@@ -227,7 +227,7 @@ export function wrap(text, maxWidthMm, sizeMm, font, forceBreak = false) {
 export function fitText({
   text,
   boxWidthMm,
-  boxHeightMm: _boxHeightMm,
+  boxHeightMm,
   sizeRangePt: [startPt, minPt],
   oneLineFloorPt,
   maxLines = 2,
@@ -246,7 +246,7 @@ export function fitText({
   for (let step = startStep; step >= floorStep; step--) {
     const sMm = step / 10;
     const w = measure(text, sMm, font);
-    if (w <= boxWidthMm) {
+    if (w <= boxWidthMm && (!boxHeightMm || sMm <= boxHeightMm + 0.01)) {
       return { lines: [text], sizeMm: sMm, status: "ok" };
     }
   }
@@ -256,7 +256,12 @@ export function fitText({
     const sMm = step / 10;
     const lines = wrap(text, boxWidthMm, sMm, font, false);
     const widest = Math.max(...lines.map((l) => measure(l, sMm, font)));
-    if (lines.length <= maxLines && widest <= boxWidthMm) {
+    const totalHeight = (lines.length - 1) * sMm * 1.25 + sMm;
+    if (
+      lines.length <= maxLines &&
+      widest <= boxWidthMm &&
+      (!boxHeightMm || totalHeight <= boxHeightMm + 0.01)
+    ) {
       return { lines, sizeMm: sMm, status: "ok" };
     }
   }

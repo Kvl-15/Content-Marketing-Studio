@@ -16,7 +16,14 @@ import {
   FONT_PAIRINGS,
   scoreQuality,
 } from "./composer.js";
-import { deriveTheme, hexToRgb, rgbToHsl } from "./themeDerivation.js";
+import {
+  DEFAULT_ROLE_LIGHTNESS,
+  DEFAULT_ROLE_LIGHTNESS_STEPS,
+  deriveRoleColor,
+  deriveTheme,
+  hexToRgb,
+  rgbToHsl,
+} from "./themeDerivation.js";
 import { distance } from "./picker.js";
 import { renderCard } from "./render.js";
 import {
@@ -29,7 +36,7 @@ import {
   stressPersonLong57,
   stressSet,
 } from "./stressSet.js";
-import { contrastRatio } from "./validate.js";
+import { contrastRatio, relativeLuminance } from "./validate.js";
 
 describe("Spike C1 + C2: Dynamic Look Composition and Quality Scorer", () => {
   const fontPath = resolve(process.cwd(), "assets/fonts/Roboto-VariableFont_wdth,wght.ttf");
@@ -166,7 +173,7 @@ describe("Spike C1 + C2: Dynamic Look Composition and Quality Scorer", () => {
       }
     }
 
-    expect(totalRenders).toBe(50 * 4 * 3);
+    expect(totalRenders).toBe(50 * ARCHETYPES.length * 3);
   }, 40000);
 
   // 4. (d) Saved look JSON re-renders byte-identical (NO call to compose)
@@ -304,8 +311,9 @@ describe("Spike C1 + C2: Dynamic Look Composition and Quality Scorer", () => {
     });
     expect(result2.drafts).toHaveLength(3);
 
-    // Because there are 4 archetypes, at least the 4th archetype should appear in result2
-    const unusedArchetype = ARCHETYPES.find((a) => !firstArchetypes.includes(a));
+    // Among the active picker archetypes, check if any unused archetype is present
+    const activeArchetypes = ARCHETYPES.filter((a) => a !== "typographic-name-first" && a !== "photo-band");
+    const unusedArchetype = activeArchetypes.find((a) => !firstArchetypes.includes(a));
     if (unusedArchetype) {
       expect(result2.drafts.some((d) => d.archetype === unusedArchetype)).toBe(true);
     }
@@ -1344,6 +1352,347 @@ describe("Spike C1 + C2: Dynamic Look Composition and Quality Scorer", () => {
         if (iss.code !== "UNKNOWN_ROLE_ID") {
           const key = `${iss.code}:${iss.message}:${iss.nodeId}`;
           expect(chosenIssueKeys.has(key)).toBe(true);
+        }
+      }
+    });
+  });
+
+  describe("Task B1-1: Event name sizing, palette role colours, and picker archetype pool", () => {
+    // 1. Archetype pool & typographic-name-first / photo-band exclusion
+    it("composeDrafts never returns typographic-name-first or photo-band across distinct seeds", () => {
+      for (let s = 1; s <= 5; s++) {
+        const result = composeDrafts(sampleEventSpec, {
+          seed: `b1-picker-seed-${s}`,
+          font,
+          brand: sampleBrandKit,
+          count: 3,
+        });
+        expect(result.drafts).toHaveLength(3);
+        for (const draft of result.drafts) {
+          expect(draft.archetype).not.toBe("typographic-name-first");
+          expect(draft.look.attributes.archetype).not.toBe("typographic-name-first");
+          expect(draft.archetype).not.toBe("photo-band");
+          expect(draft.look.attributes.archetype).not.toBe("photo-band");
+          expect(ARCHETYPES).toContain(draft.archetype);
+        }
+      }
+    }, 30000);
+
+    it("random compose without forced archetype only chooses from active ARCHETYPES", () => {
+      for (let s = 1; s <= 30; s++) {
+        const result = compose(sampleEventSpec, `b1-compose-seed-${s}`);
+        expect(result.archetype).not.toBe("typographic-name-first");
+        expect(result.archetype).not.toBe("photo-band");
+        expect(ARCHETYPES).toContain(result.archetype);
+      }
+    });
+
+    it("explicit compose call with forced typographic-name-first or photo-band still works", () => {
+      const explicit = compose(sampleEventSpec, "b1-explicit-seed", "typographic-name-first");
+      expect(explicit.archetype).toBe("typographic-name-first");
+      expect(explicit.skeleton.id).toContain("composed.");
+
+      const explicitBand = compose(sampleEventSpec, "b1-explicit-band", "photo-band");
+      expect(explicitBand.archetype).toBe("photo-band");
+      expect(explicitBand.skeleton.id).toContain("composed.");
+    });
+
+    // 2. Event name sizing & wrap tests
+    it("longest gallery event name ('ACM Computing Symposium') renders at >= 7 pt with zero truncation", () => {
+      const evLongest = {
+        ...sampleEventSpec,
+        event: { ...sampleEventSpec.event, name: "ACM Computing Symposium" },
+      };
+      for (const archetype of ARCHETYPES) {
+        const bundle = compose(evLongest, `b1-longest-${archetype}`, archetype);
+        const res = renderCard({
+          person: personNormal,
+          event: evLongest,
+          brand: sampleBrandKit,
+          font,
+          ...bundle,
+        });
+
+        const evNode = res.scene.find((n) => n.bind === "event.name" || n.id === "event-name");
+        expect(evNode).toBeDefined();
+        const pt = evNode.sizeMm / 0.352778;
+        expect(pt).toBeGreaterThanOrEqual(7.0);
+        expect(res.issues.filter((i) => i.code === "TEXT_TRUNCATED" || i.code === "EVENT_NAME_DOES_NOT_FIT")).toHaveLength(0);
+        expect(evNode.lines.join(" ")).toContain("ACM COMPUTING SYMPOSIUM");
+        expect(evNode.lines.join(" ")).not.toContain("...");
+      }
+    });
+
+    it("long event name wraps to two lines without clipping or truncation", () => {
+      const evMultiLine = {
+        ...sampleEventSpec,
+        event: { ...sampleEventSpec.event, name: "International Collegiate Programming Contest" },
+      };
+      for (const archetype of ARCHETYPES) {
+        const bundle = compose(evMultiLine, `b1-wrap-${archetype}`, archetype);
+        const res = renderCard({
+          person: personNormal,
+          event: evMultiLine,
+          brand: sampleBrandKit,
+          font,
+          ...bundle,
+        });
+
+        const evNode = res.scene.find((n) => n.bind === "event.name" || n.id === "event-name");
+        expect(evNode).toBeDefined();
+        expect(evNode.lines.length).toBeLessThanOrEqual(2);
+        expect(evNode.lines.join(" ")).not.toContain("...");
+        const pt = evNode.sizeMm / 0.352778;
+        expect(pt).toBeGreaterThanOrEqual(5.5);
+      }
+    });
+
+    it("extreme unshrinkable event name hides and raises EVENT_NAME_DOES_NOT_FIT rather than emitting a clipped or ... string", () => {
+      const evExtreme = {
+        ...sampleEventSpec,
+        event: { ...sampleEventSpec.event, name: "SupercalifragilisticexpialidociousSupercalifragilisticexpialidocious" },
+      };
+      for (const archetype of ARCHETYPES) {
+        const bundle = compose(evExtreme, `b1-extreme-${archetype}`, archetype);
+        const res = renderCard({
+          person: personNormal,
+          event: evExtreme,
+          brand: sampleBrandKit,
+          font,
+          ...bundle,
+        });
+
+        const evNode = res.scene.find((n) => n.bind === "event.name" || n.id === "event-name");
+        expect(evNode).toBeUndefined(); // Hidden!
+        expect(res.issues.some((i) => i.code === "EVENT_NAME_DOES_NOT_FIT")).toBe(true);
+        expect(res.svg).not.toContain("Supercalifragilistic");
+        expect(res.svg).not.toContain("...");
+      }
+    });
+
+    it("event name maintains safe margin >= 3mm and block spacing >= 2mm", () => {
+      for (const archetype of ARCHETYPES) {
+        const bundle = compose(sampleEventSpec, `b1-spacing-${archetype}`, archetype);
+        const res = renderCard({
+          person: personNormal,
+          event: sampleEventSpec,
+          brand: sampleBrandKit,
+          font,
+          ...bundle,
+        });
+
+        const evNode = res.scene.find((n) => n.bind === "event.name" || n.id === "event-name");
+        expect(evNode).toBeDefined();
+        // Safe margin >= 3mm from left and right edges
+        expect(evNode.box.x).toBeGreaterThanOrEqual(3.0);
+        expect(evNode.box.x + evNode.box.w).toBeLessThanOrEqual(54.0 - 3.0 + 0.01);
+
+        // Header and photo block spacing >= 2mm
+        const photoNode = res.scene.find((n) => n.id === "photo");
+        if (photoNode) {
+          const gap = photoNode.box.y - (evNode.box.y + evNode.box.h);
+          expect(gap).toBeGreaterThanOrEqual(1.79);
+        }
+      }
+    });
+
+    // 3. Role color derivation tests
+    it("default role colours have 4 lightness steps >= 15% apart and are distinct in grayscale", () => {
+      const steps = [
+        DEFAULT_ROLE_LIGHTNESS.volunteer,
+        DEFAULT_ROLE_LIGHTNESS.participant,
+        DEFAULT_ROLE_LIGHTNESS.organizer,
+        DEFAULT_ROLE_LIGHTNESS.mentor,
+      ];
+      expect(DEFAULT_ROLE_LIGHTNESS_STEPS).toEqual(steps);
+      for (let i = 0; i < steps.length - 1; i++) {
+        const diff = steps[i] - steps[i + 1];
+        expect(diff).toBeGreaterThanOrEqual(0.15); // >= 15% apart
+      }
+
+      // Verify derived colors across test palettes maintain distinct grayscale luminance
+      const testPals = [
+        ["#7F1D1D", "#F97316"], // RoboWars red
+        ["#064E3B", "#34D399"], // OpenSource green
+        ["#09090B", "#22C55E"], // CyberShield black/green
+        ["#831843", "#F472B6"], // WomenInTech magenta
+      ];
+      for (const pal of testPals) {
+        const spec = { ...sampleEventSpec, event: { ...sampleEventSpec.event, palette: pal } };
+        const lums = ["volunteer", "participant", "organizer", "mentor"].map((role) => {
+          const col = deriveRoleColor(role, spec);
+          return relativeLuminance(col);
+        });
+        // Luminance must be strictly descending (distinct in grayscale)
+        for (let i = 0; i < lums.length - 1; i++) {
+          expect(lums[i]).toBeGreaterThan(lums[i + 1]);
+        }
+      }
+    });
+
+    it("derives role colours from event palette when role color status is defaulted", () => {
+      const redSpec = {
+        ...sampleEventSpec,
+        event: { ...sampleEventSpec.event, palette: ["#7F1D1D", "#F97316"] },
+        roles: [
+          { id: "participant", label: "PARTICIPANT", expectedCount: 100, color: { value: "#2563EB", status: "defaulted", source: "default" } },
+        ],
+      };
+      const greenSpec = {
+        ...sampleEventSpec,
+        event: { ...sampleEventSpec.event, palette: ["#064E3B", "#34D399"] },
+        roles: [
+          { id: "participant", label: "PARTICIPANT", expectedCount: 100, color: { value: "#2563EB", status: "defaulted", source: "default" } },
+        ],
+      };
+
+      const redColor = deriveRoleColor("participant", redSpec);
+      const greenColor = deriveRoleColor("participant", greenSpec);
+
+      // Red spec must not use the blue default #2563EB or green
+      expect(redColor).not.toBe("#2563EB");
+      expect(greenColor).not.toBe("#2563EB");
+      expect(redColor).not.toBe(greenColor);
+
+      // Verify red hue (0..30 or 340..360) vs green hue (90..170)
+      const [rr, rg, rb] = hexToRgb(redColor);
+      const [gr, gg, gb] = hexToRgb(greenColor);
+      const [rH] = rgbToHsl(rr, rg, rb);
+      const [gH] = rgbToHsl(gr, gg, gb);
+      expect(rH < 30 || rH > 340).toBe(true);
+      expect(gH).toBeGreaterThanOrEqual(140);
+      expect(gH).toBeLessThanOrEqual(180);
+    });
+
+    it("never overrides user-provided role colours when status is provided or source is not default", () => {
+      const customSpec = {
+        ...sampleEventSpec,
+        event: { ...sampleEventSpec.event, palette: ["#7F1D1D", "#F97316"] },
+        roles: [
+          { id: "participant", label: "PARTICIPANT", expectedCount: 100, color: { value: "#9333EA", status: "provided", source: "user", confirmed: true } },
+        ],
+      };
+      const resolved = deriveRoleColor("participant", customSpec);
+      expect(resolved).toBe("#9333EA"); // Kept user-provided purple!
+    });
+
+    it("role pill text has WCAG contrast >= 4.5:1 on derived role colours", () => {
+      const testPals = [
+        ["#7F1D1D", "#F97316"],
+        ["#064E3B", "#34D399"],
+        ["#09090B", "#22C55E"],
+        ["#831843", "#F472B6"],
+      ];
+      for (const pal of testPals) {
+        const spec = { ...sampleEventSpec, event: { ...sampleEventSpec.event, palette: pal } };
+        for (const roleId of ["volunteer", "participant", "organizer", "mentor"]) {
+          const col = deriveRoleColor(roleId, spec);
+          const whiteRatio = contrastRatio("#FFFFFF", col);
+          const darkRatio = contrastRatio("#111827", col);
+          const maxRatio = Math.max(whiteRatio, darkRatio);
+          expect(maxRatio).toBeGreaterThanOrEqual(4.5);
+        }
+      }
+    });
+  });
+
+  describe("Task B1-2: Add two new card compositions (left-aligned-bold and photo-band)", () => {
+    const hackSuratEvent = {
+      schemaVersion: 1,
+      designType: "id-card",
+      event: {
+        name: { value: "HackSurat 2026", status: "provided" },
+        tagline: { value: "48-Hour National Hackathon", status: "provided" },
+        venue: { value: "SVNIT Campus, Surat", status: "provided" },
+        palette: ["#0F172A", "#38BDF8"],
+      },
+      roles: [
+        { id: "participant", label: "PARTICIPANT", color: { value: "#2563EB", status: "defaulted" } },
+        { id: "mentor", label: "MENTOR", color: { value: "#16A34A", status: "defaulted" } },
+        { id: "organizer", label: "ORGANIZER", color: { value: "#D97706", status: "provided" } },
+        { id: "volunteer", label: "VOLUNTEER", color: { value: "#BAE6FD", status: "defaulted" } },
+      ],
+      palette: ["#0F172A", "#38BDF8"],
+      card: { widthMm: 54, heightMm: 85.6, orientation: "portrait", bleedMm: 3, safeMarginMm: 3, sides: "front" },
+    };
+
+    const archetypes = ["left-aligned-bold", "photo-band"];
+    const modes = ["light", "dark", "colour-field"];
+
+    it("renders both new archetypes across 3 modes on HackSurat 2026 with zero issues of any severity", () => {
+      for (const arch of archetypes) {
+        for (const mode of modes) {
+          const bundle = compose(hackSuratEvent, `b1-2-${arch}-${mode}`, arch, mode);
+          const res = renderCard({
+            person: personNormal,
+            event: hackSuratEvent,
+            brand: sampleBrandKit,
+            card: hackSuratEvent.card,
+            font,
+            ...bundle,
+          });
+          expect(res.issues || []).toEqual([]);
+        }
+      }
+    });
+
+    it("guarantees role text is 7 pt or more across both new archetypes and all 3 modes", () => {
+      for (const arch of archetypes) {
+        for (const mode of modes) {
+          const bundle = compose(hackSuratEvent, `b1-2-role-${arch}-${mode}`, arch, mode);
+          const res = renderCard({
+            person: personNormal,
+            event: hackSuratEvent,
+            brand: sampleBrandKit,
+            card: hackSuratEvent.card,
+            font,
+            ...bundle,
+          });
+          const roleNode = res.scene.find((n) => n.id === "role" || n.bind === "role.label");
+          expect(roleNode).toBeDefined();
+          const rolePt = roleNode.sizeMm / 0.352778;
+          expect(rolePt).toBeGreaterThanOrEqual(7.0 - 0.01);
+        }
+      }
+    });
+
+    it("guarantees block and element gaps are 2 mm or more", () => {
+      for (const arch of archetypes) {
+        for (const mode of modes) {
+          const bundle = compose(hackSuratEvent, `b1-2-gaps-${arch}-${mode}`, arch, mode);
+          const res = renderCard({
+            person: personNormal,
+            event: hackSuratEvent,
+            brand: sampleBrandKit,
+            card: hackSuratEvent.card,
+            font,
+            ...bundle,
+          });
+
+          const photoNode = res.scene.find((n) => n.id === "photo");
+          const nameNode = res.scene.find((n) => n.id === "name");
+          const eventNode = res.scene.find((n) => n.bind === "event.name" || n.id === "event-name");
+          expect(photoNode).toBeDefined();
+          expect(nameNode).toBeDefined();
+
+          if (arch === "photo-band") {
+            const photoBottom = photoNode.box.y + photoNode.box.h;
+            const nameTop = nameNode.box.y;
+            expect(nameTop - photoBottom).toBeGreaterThanOrEqual(2.0 - 0.01);
+            if (eventNode) {
+              expect(photoNode.box.y - (eventNode.box.y + eventNode.box.h)).toBeGreaterThanOrEqual(2.0 - 0.01);
+            }
+          } else if (arch === "left-aligned-bold") {
+            if (eventNode) {
+              expect(photoNode.box.y - (eventNode.box.y + eventNode.box.h)).toBeGreaterThanOrEqual(2.0 - 0.01);
+            }
+            const roleNode = res.scene.find((n) => n.id === "role");
+            if (roleNode) {
+              const roleTop = roleNode.box.y;
+              const nameBottom = nameNode.box.y + nameNode.box.h;
+              expect(roleTop - nameBottom).toBeGreaterThanOrEqual(2.0 - 0.01);
+            }
+          }
         }
       }
     });

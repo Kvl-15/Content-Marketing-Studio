@@ -12,6 +12,12 @@ import { isValidCalendarDate } from "../intake/gaps.js";
 import { slugify, defaultRoleColor } from "../intake/applyAnswer.js";
 
 /**
+ * Default Groq fallback model.
+ * Verified available in Groq production model documentation (console.groq.com/docs/models).
+ */
+export const DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b";
+
+/**
  * Zod schema for structured brief extraction from Gemini.
  */
 export const BriefExtractionSchema = z.object({
@@ -213,6 +219,317 @@ export function evidenceCheck(raw, brief) {
 }
 
 /**
+ * Validates extraction output against BriefExtractionSchema and evidenceCheck,
+ * then maps the verified fields into an EventSpec scaffold with provenance.
+ * Strictly preserves confirmation semantics (status: "provided", confirmed: false).
+ * Never invents missing event details.
+ *
+ * @param {any} rawExtraction
+ * @param {string} brief
+ * @param {"id-card" | null} detectedType
+ * @returns {any}
+ */
+export function assembleSpecFromExtraction(rawExtraction, brief, detectedType) {
+  const validated = BriefExtractionSchema.parse(rawExtraction);
+  const verified = evidenceCheck(validated, brief);
+  const assembledSpec = emptySpec(detectedType);
+
+  if (verified.name) {
+    assembledSpec.event.name = {
+      value: verified.name,
+      status: "provided",
+      source: "brief",
+      confirmed: false,
+    };
+  }
+  if (verified.tagline) {
+    assembledSpec.event.tagline = {
+      value: verified.tagline,
+      status: "provided",
+      source: "brief",
+      confirmed: false,
+    };
+  }
+  if (verified.venue) {
+    assembledSpec.event.venue = {
+      value: verified.venue,
+      status: "provided",
+      source: "brief",
+      confirmed: false,
+    };
+  }
+  if (verified.dates) {
+    assembledSpec.event.dates = {
+      value: verified.dates,
+      status: "provided",
+      source: "brief",
+      confirmed: false,
+    };
+  }
+  if (verified.palette) {
+    assembledSpec.event.palette = verified.palette;
+  }
+  if (verified.fields) {
+    assembledSpec.fields = {
+      value: verified.fields,
+      status: "provided",
+      source: "brief",
+      confirmed: false,
+    };
+  }
+  if (verified.roles && verified.roles.length > 0) {
+    assembledSpec.roles = verified.roles.map((r, i) => ({
+      id: slugify(r.label),
+      label: r.label,
+      expectedCount: r.expectedCount || 0,
+      color: {
+        value: defaultRoleColor(i),
+        status: "defaulted",
+        source: "default",
+        confirmed: false,
+      },
+    }));
+  }
+
+  return assembledSpec;
+}
+
+/**
+ * Inspects HTTP 429 response for Retry-After header or quota exhaustion.
+ *
+ * @param {Response} response
+ * @param {string} errorText
+ * @returns {{ isQuotaExhausted: boolean; retryAfterMs: number | null }}
+ */
+export function inspectRateLimit(response, errorText = "") {
+  const isQuotaExhausted = /quota|insufficient_quota|billing|credit|resource_exhausted/i.test(errorText);
+
+  let retryAfterMs = null;
+  const retryAfterHeader = response?.headers?.get ? response.headers.get("retry-after") : null;
+  if (retryAfterHeader) {
+    const seconds = parseFloat(retryAfterHeader);
+    if (!isNaN(seconds) && seconds > 0) {
+      retryAfterMs = Math.round(seconds * 1000);
+    }
+  }
+
+  return { isQuotaExhausted, retryAfterMs };
+}
+
+/**
+ * Default sleep implementation.
+ *
+ * @param {number} ms
+ * @returns {Promise<void>}
+ */
+const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Parses a brief using Groq chat completions REST API with structured JSON output.
+ * Acts as the fallback provider when Gemini experiences transient outages.
+ *
+ * @param {string} briefText
+ * @param {{
+ *   today?: string;
+ *   fetchFn?: typeof fetch;
+ *   groqApiKey?: string;
+ *   groqModel?: string;
+ *   timeoutMs?: number;
+ *   totalDeadlineMs?: number;
+ *   sleepFn?: (ms: number) => Promise<void>;
+ * }} [options]
+ * @returns {Promise<{
+ *   ok: true;
+ *   spec: any;
+ *   designType: string | null;
+ *   meta: {
+ *     provider: "groq";
+ *     model: string;
+ *     attempts: number;
+ *     elapsedMs: number;
+ *     outcome: string;
+ *   };
+ * } | {
+ *   ok: false;
+ *   error: { code: string; message: string; details?: any };
+ *   emptySpec: any;
+ *   meta: {
+ *     provider: "groq";
+ *     model: string;
+ *     attempts: number;
+ *     elapsedMs: number;
+ *     outcome: string;
+ *   };
+ * }>}
+ */
+export async function parseBriefWithGroq(briefText, options = {}) {
+  const startTime = Date.now();
+  const brief = typeof briefText === "string" ? briefText.trim() : "";
+  const detectedType = detectDesignType(brief);
+  const fallbackSpec = emptySpec(detectedType);
+
+  const model = options.groqModel || process.env.GROQ_MODEL || DEFAULT_GROQ_MODEL;
+  const apiKey = options.groqApiKey || process.env.GROQ_API_KEY;
+  const today = options.today || "2026-10-20";
+  const fetchFn = options.fetchFn || globalThis.fetch;
+  const sleepFn = options.sleepFn || defaultSleep;
+
+  const totalDeadlineMs = options.totalDeadlineMs ?? 35000;
+  const perAttemptTimeout = options.timeoutMs ?? 15000;
+
+  if (!brief) {
+    return {
+      ok: false,
+      error: { code: "EMPTY_BRIEF", message: "Brief text is required." },
+      emptySpec: fallbackSpec,
+      meta: {
+        provider: "groq",
+        model,
+        attempts: 0,
+        elapsedMs: Date.now() - startTime,
+        outcome: "failed",
+      },
+    };
+  }
+
+  if (!apiKey) {
+    const elapsedMs = Date.now() - startTime;
+    return {
+      ok: false,
+      error: {
+        code: "AI_UNAVAILABLE",
+        message: "Groq API key is not configured.",
+      },
+      emptySpec: fallbackSpec,
+      meta: {
+        provider: "groq",
+        model,
+        attempts: 0,
+        elapsedMs,
+        outcome: "failed",
+      },
+    };
+  }
+
+  const endpointUrl = "https://api.groq.com/openai/v1/chat/completions";
+  let attempts = 0;
+  let lastError = null;
+
+  while (attempts < 2) {
+    const elapsedNow = Date.now() - startTime;
+    const timeLeft = totalDeadlineMs - elapsedNow;
+    if (timeLeft <= 0) {
+      lastError = new Error("Deadline exceeded");
+      break;
+    }
+
+    const attemptTimeout = Math.max(1, Math.min(perAttemptTimeout, timeLeft));
+    attempts++;
+
+    const prompt = buildPrompt(brief, today, lastError?.message);
+
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), attemptTimeout);
+
+      const response = await fetchFn(endpointUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            {
+              role: "user",
+              content: prompt,
+            },
+          ],
+          response_format: { type: "json_object" },
+          temperature: 0.1,
+        }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => "");
+
+        if (response.status === 401 || response.status === 403) {
+          throw new Error(`Groq authentication error (HTTP ${response.status}): ${errorText.slice(0, 200)}`);
+        }
+
+        if (response.status === 429) {
+          const { isQuotaExhausted, retryAfterMs } = inspectRateLimit(response, errorText);
+          if (isQuotaExhausted || attempts >= 2) {
+            throw new Error(`Groq rate limit exceeded (HTTP 429): ${errorText.slice(0, 200)}`);
+          }
+          const waitTime = Math.min(retryAfterMs ?? 500, 2000);
+          await sleepFn(waitTime);
+          continue;
+        }
+
+        if ([500, 502, 503, 504].includes(response.status)) {
+          if (attempts < 2) {
+            await sleepFn(500);
+            continue;
+          }
+        }
+
+        throw new Error(`HTTP ${response.status}: ${errorText.slice(0, 200)}`);
+      }
+
+      const data = await response.json();
+      const content = data?.choices?.[0]?.message?.content;
+      if (!content) {
+        throw new Error("Empty content in Groq response choices");
+      }
+
+      const parsedJson = JSON.parse(content);
+      const assembledSpec = assembleSpecFromExtraction(parsedJson, brief, detectedType);
+
+      const elapsedMs = Date.now() - startTime;
+      return {
+        ok: true,
+        spec: assembledSpec,
+        designType: detectedType,
+        meta: {
+          provider: "groq",
+          model,
+          attempts,
+          elapsedMs,
+          outcome: attempts === 1 ? "ok" : "retry",
+        },
+      };
+    } catch (err) {
+      lastError = err;
+      if (err.message?.includes("authentication error")) {
+        break;
+      }
+    }
+  }
+
+  const elapsedMs = Date.now() - startTime;
+  return {
+    ok: false,
+    error: {
+      code: "BRIEF_PARSE_FAILED",
+      message: `Failed to parse brief with Groq: ${lastError?.message || "Unknown error"}`,
+    },
+    emptySpec: fallbackSpec,
+    meta: {
+      provider: "groq",
+      model,
+      attempts,
+      elapsedMs,
+      outcome: "failed",
+    },
+  };
+}
+
+/**
  * Builds the prompt string containing JSON schema, today's date, brief,
  * and the hard zero-invention rule.
  *
@@ -294,8 +611,10 @@ export async function parseBrief(briefText, options = {}) {
 
   const model = options.model || process.env.GEMINI_MODEL || "gemini-3-flash-preview";
   const apiKey = options.apiKey || process.env.GEMINI_API_KEY;
+  const groqApiKey = options.groqApiKey || process.env.GROQ_API_KEY;
   const today = options.today || "2026-10-20";
   const fetchFn = options.fetchFn || globalThis.fetch;
+  const sleepFn = options.sleepFn || defaultSleep;
 
   // Time limits (Requirement 4): default 35s overall deadline, 15s per-attempt timeout
   const totalDeadlineMs = options.totalDeadlineMs ?? 35000;
@@ -316,6 +635,7 @@ export async function parseBrief(briefText, options = {}) {
       error: { code: "EMPTY_BRIEF", message: "Brief text is required." },
       emptySpec: fallbackSpec,
       meta: {
+        provider: "gemini",
         model,
         thinkingLevel: initialThinkingLevel,
         attempts: 0,
@@ -337,6 +657,7 @@ export async function parseBrief(briefText, options = {}) {
       },
       emptySpec: fallbackSpec,
       meta: {
+        provider: "gemini",
         model,
         thinkingLevel: initialThinkingLevel,
         attempts: 0,
@@ -352,12 +673,15 @@ export async function parseBrief(briefText, options = {}) {
   let totalAttempts = 0;
   let lastError = null;
   let isThinkingRetry = false;
+  let isAuthError = false;
+  let isTransient = false;
 
   while (normalAttempts < 2) {
     const elapsedNow = Date.now() - startTime;
     const timeLeft = totalDeadlineMs - elapsedNow;
     if (timeLeft <= 0) {
       lastError = new Error("Deadline of 35000ms exceeded");
+      isTransient = true;
       break;
     }
 
@@ -397,6 +721,13 @@ export async function parseBrief(briefText, options = {}) {
       if (!response.ok) {
         const errorText = await response.text().catch(() => "");
 
+        // Authentication errors (401, 403) - do NOT retry, do NOT call Groq
+        if (response.status === 401 || response.status === 403) {
+          isAuthError = true;
+          lastError = new Error(`HTTP ${response.status} (authentication error): ${errorText.slice(0, 200)}`);
+          break;
+        }
+
         // Requirement 3: Thinking fallback on HTTP 400 mentioning "thinking"
         if (response.status === 400) {
           if (!thinkingFallbackUsed && /thinking/i.test(errorText)) {
@@ -411,6 +742,47 @@ export async function parseBrief(briefText, options = {}) {
           break;
         }
 
+        // HTTP 429: inspect rate limit / quota exhaustion
+        if (response.status === 429) {
+          const { isQuotaExhausted, retryAfterMs } = inspectRateLimit(response, errorText);
+          isTransient = true;
+          lastError = new Error(`HTTP 429 (rate limit): ${errorText.slice(0, 200)}`);
+          if (isQuotaExhausted || normalAttempts >= 2) {
+            break; // Stop immediately without looping on quota exhaustion
+          }
+          const waitMs = Math.min(retryAfterMs ?? 500, 2000);
+          const timeAvailable = totalDeadlineMs - (Date.now() - startTime);
+          if (timeAvailable > waitMs) {
+            await sleepFn(waitMs);
+            continue;
+          }
+          break;
+        }
+
+        // Transient provider errors: HTTP 502, 503, 504
+        if (response.status === 502 || response.status === 503 || response.status === 504) {
+          isTransient = true;
+          lastError = new Error(`HTTP ${response.status}: ${errorText.slice(0, 200)}`);
+          if (groqApiKey) {
+            break; // Fall back to Groq immediately
+          }
+          if (normalAttempts < 2) {
+            await sleepFn(500);
+            continue;
+          }
+          break;
+        }
+
+        // Transient 500
+        if (response.status === 500) {
+          isTransient = true;
+          lastError = new Error(`HTTP 500: ${errorText.slice(0, 200)}`);
+          if (normalAttempts < 2) {
+            continue;
+          }
+          break;
+        }
+
         throw new Error(`HTTP ${response.status}: ${errorText.slice(0, 200)}`);
       }
 
@@ -422,70 +794,7 @@ export async function parseBrief(briefText, options = {}) {
       }
 
       const parsedJson = JSON.parse(textContent);
-      const validated = BriefExtractionSchema.parse(parsedJson);
-
-      // Perform evidence check (KB 7.1 step 4)
-      const verified = evidenceCheck(validated, brief);
-
-      // Assemble spec with provenance marking (KB 7.1 step 5)
-      const assembledSpec = emptySpec(detectedType);
-
-      if (verified.name) {
-        assembledSpec.event.name = {
-          value: verified.name,
-          status: "provided",
-          source: "brief",
-          confirmed: false,
-        };
-      }
-      if (verified.tagline) {
-        assembledSpec.event.tagline = {
-          value: verified.tagline,
-          status: "provided",
-          source: "brief",
-          confirmed: false,
-        };
-      }
-      if (verified.venue) {
-        assembledSpec.event.venue = {
-          value: verified.venue,
-          status: "provided",
-          source: "brief",
-          confirmed: false,
-        };
-      }
-      if (verified.dates) {
-        assembledSpec.event.dates = {
-          value: verified.dates,
-          status: "provided",
-          source: "brief",
-          confirmed: false,
-        };
-      }
-      if (verified.palette) {
-        assembledSpec.event.palette = verified.palette;
-      }
-      if (verified.fields) {
-        assembledSpec.fields = {
-          value: verified.fields,
-          status: "provided",
-          source: "brief",
-          confirmed: false,
-        };
-      }
-      if (verified.roles && verified.roles.length > 0) {
-        assembledSpec.roles = verified.roles.map((r, i) => ({
-          id: slugify(r.label),
-          label: r.label,
-          expectedCount: r.expectedCount || 0,
-          color: {
-            value: defaultRoleColor(i),
-            status: "defaulted",
-            source: "default",
-            confirmed: false,
-          },
-        }));
-      }
+      const assembledSpec = assembleSpecFromExtraction(parsedJson, brief, detectedType);
 
       const elapsedMs = Date.now() - startTime;
       const outcome = totalAttempts === 1 ? "ok" : "retry";
@@ -496,6 +805,7 @@ export async function parseBrief(briefText, options = {}) {
         spec: assembledSpec,
         designType: detectedType,
         meta: {
+          provider: "gemini",
           model,
           thinkingLevel: initialThinkingLevel,
           attempts: totalAttempts,
@@ -505,10 +815,90 @@ export async function parseBrief(briefText, options = {}) {
       };
     } catch (err) {
       lastError = err;
-      if (normalAttempts < 2) {
+      if (err.name === "AbortError" || /aborted|timeout|fetch failed/i.test(err.message)) {
+        isTransient = true;
+        if (groqApiKey) {
+          break; // Fall back to Groq immediately on timeout
+        }
+      }
+      if (normalAttempts < 2 && !isAuthError) {
         const elapsedSoFar = Date.now() - startTime;
         console.log(`[AI Intake] brief length: ${brief.length}, outcome: retry, attempts: ${totalAttempts}, elapsed: ${elapsedSoFar}ms`);
       }
+    }
+  }
+
+  // Handle Authentication Errors (401/403) - Groq is NOT called
+  if (isAuthError) {
+    const elapsedMs = Date.now() - startTime;
+    console.log(`[AI Intake] brief length: ${brief.length}, outcome: failed (auth error), attempts: ${totalAttempts}, elapsed: ${elapsedMs}ms`);
+    return {
+      ok: false,
+      error: {
+        code: "AI_UNAVAILABLE",
+        message: `Gemini authentication error: ${lastError?.message || "Invalid or unauthorized API key"}`,
+      },
+      emptySpec: fallbackSpec,
+      meta: {
+        provider: "gemini",
+        model,
+        thinkingLevel: initialThinkingLevel,
+        attempts: totalAttempts,
+        elapsedMs,
+        outcome: "failed",
+      },
+    };
+  }
+
+  // Handle Transient Provider Error -> Fall back to Groq if configured
+  if (isTransient && groqApiKey) {
+    const remainingTime = totalDeadlineMs - (Date.now() - startTime);
+    if (remainingTime > 100) {
+      console.log(`[AI Intake] brief length: ${brief.length}, outcome: fallback_groq, attempts: ${totalAttempts}, elapsed: ${Date.now() - startTime}ms`);
+      const groqResult = await parseBriefWithGroq(brief, {
+        ...options,
+        groqApiKey,
+        fetchFn: options.groqFetchFn || options.fetchFn,
+        totalDeadlineMs: remainingTime,
+        timeoutMs: Math.min(perAttemptTimeout, remainingTime),
+        sleepFn,
+      });
+
+      if (groqResult.ok) {
+        const totalElapsed = Date.now() - startTime;
+        console.log(`[AI Intake] brief length: ${brief.length}, outcome: ok, attempts: ${totalAttempts + groqResult.meta.attempts}, elapsed: ${totalElapsed}ms`);
+        return {
+          ok: true,
+          spec: groqResult.spec,
+          designType: detectedType,
+          meta: {
+            ...groqResult.meta,
+            fallbackFrom: "gemini",
+            geminiAttempts: totalAttempts,
+            totalElapsedMs: totalElapsed,
+          },
+        };
+      }
+
+      // Both providers failed: preserve user input scaffold, return clear recoverable error
+      const totalElapsed = Date.now() - startTime;
+      console.log(`[AI Intake] brief length: ${brief.length}, outcome: failed, attempts: ${totalAttempts + (groqResult.meta?.attempts || 0)}, elapsed: ${totalElapsed}ms`);
+      return {
+        ok: false,
+        error: {
+          code: "BRIEF_PARSE_FAILED",
+          message: `Gemini transient error (${lastError?.message || "transient error"}) and Groq fallback failed (${groqResult.error?.message || "fallback failed"})`,
+        },
+        emptySpec: fallbackSpec,
+        meta: {
+          provider: "fallback_failed",
+          model,
+          thinkingLevel: initialThinkingLevel,
+          attempts: totalAttempts + (groqResult.meta?.attempts || 0),
+          elapsedMs: totalElapsed,
+          outcome: "failed",
+        },
+      };
     }
   }
 
@@ -523,6 +913,7 @@ export async function parseBrief(briefText, options = {}) {
     },
     emptySpec: fallbackSpec,
     meta: {
+      provider: "gemini",
       model,
       thinkingLevel: initialThinkingLevel,
       attempts: totalAttempts,

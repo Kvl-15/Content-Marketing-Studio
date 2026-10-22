@@ -17,7 +17,7 @@ import {
   personNormal,
   personNoPhoto,
 } from "../../core/fixtures.js";
-import { composeDrafts } from "../../core/composer.js";
+import { compose, composeDrafts } from "../../core/composer.js";
 import { ExportSettingsError } from "../../core/exportSettings.js";
 import { loadContent } from "../../scripts/loadContent.js";
 
@@ -666,8 +666,9 @@ describe("E2a: Single-Card Export & D-09 Gate", () => {
 
     it("verifies bleed extension at corner in ALL THREE modes (light, dark, colour-field)", async () => {
       for (const mode of ["light", "dark", "colour-field"]) {
-        const modeDraft =
-          drafts.find((d) => d.look.attributes.mode === mode) || draft;
+        // Pinned to archetype each mode's bleed corner assertions were written for (colour-block-split for light mode role bar)
+        const archetype = mode === "light" ? "colour-block-split" : (mode === "dark" ? "hero-photo-top" : "circle-badge-centre");
+        const modeDraft = compose(sampleEventSpec, `bleed-${mode}`, archetype, mode);
         const input = {
           eventSpec: sampleEventSpec,
           draft: modeDraft,

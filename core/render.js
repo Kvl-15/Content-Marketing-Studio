@@ -1,14 +1,9 @@
 // @ts-check
 import { BleedMmSchema } from "./exportSettings.js";
 import { autofix } from "./autofix.js";
-import {
-  defaultBlocks,
-  defaultLook,
-  defaultSkeleton,
-  defaultTheme,
-} from "./templateData.js";
+import { defaultBlocks, defaultTheme } from "./templateData.js";
 import { fitText, measure, PT_TO_MM, textToPathData } from "./text.js";
-import { deriveTheme, ensureContrast } from "./themeDerivation.js";
+import { deriveRoleColor, deriveTheme, ensureContrast } from "./themeDerivation.js";
 import { contrastRatio, LINE_HEIGHT, relativeLuminance, validate } from "./validate.js";
 
 /**
@@ -135,9 +130,10 @@ export function renderCard(input) {
   const heightMm = input.card?.heightMm ?? (isLandscape ? skeleton.size.w : skeleton.size.h);
 
   // 1. Resolve role details from event (D-09: No fabricated fallbacks)
-  const roleMatch = event?.roles?.find((/** @type {any} */ r) => r.id === person.roleId);
+  const roleIdx = event?.roles ? event.roles.findIndex((/** @type {any} */ r) => r.id === person.roleId) : -1;
+  const roleMatch = event?.roles && roleIdx >= 0 ? event.roles[roleIdx] : null;
   const roleLabel = roleMatch ? roleMatch.label : "UNKNOWN ROLE";
-  const roleColor = roleMatch?.color?.value || "#6B7280";
+  const roleColor = deriveRoleColor(person.roleId, event, roleIdx >= 0 ? roleIdx : 0);
 
   // 2. Resolve or derive theme colors (D-24)
   const palette =
@@ -395,10 +391,6 @@ export function renderCard(input) {
           const logoSpec = logoKey ? brand?.logos?.[logoKey] : null;
 
           let targetBox = box;
-          let fittedW = box.w;
-          let fittedH = box.h;
-          let fittedX = box.x;
-          let fittedY = box.y;
           const hasRealLogo = !!(logoSpec?.dataUri && logoSpec?.width && logoSpec?.height);
 
           if (hasRealLogo) {
@@ -521,7 +513,7 @@ export function renderCard(input) {
           }
         }
       } else if (el.type === "text") {
-        let textVal = "";
+        let textVal;
         if (el.bind === "person.name") {
           textVal = person.name || "";
         } else if (el.bind === "role.label") {
@@ -550,7 +542,9 @@ export function renderCard(input) {
 
         let fit;
         if (font) {
-          const sizeRange = isEventName ? [el.size?.[0] || 7, Math.min(el.size?.[1] || 6, 6)] : el.size;
+          const sizeRange = isEventName
+            ? [Math.max(el.size?.[0] || 8.5, 7), Math.min(el.size?.[1] || 5.5, 5.5)]
+            : el.size;
           const maxLines = isEventName ? 2 : (el.maxLines || 2);
           const fittedText = isEventName ? textVal.toUpperCase() : textVal;
 
@@ -565,11 +559,11 @@ export function renderCard(input) {
           });
 
           if (isEventName && fit.status === "truncated") {
-            // Event name is never truncated. If it cannot fit at 6 pt floor across 2 lines,
+            // Event name is never truncated. If it cannot fit at 5.5 pt floor across 2 lines,
             // hide it and raise a warning issue EVENT_NAME_DOES_NOT_FIT.
             preflightIssues.push({
               code: "EVENT_NAME_DOES_NOT_FIT",
-              message: `Event name "${textVal}" does not fit in available space at 6 pt floor; hidden`,
+              message: `Event name "${textVal}" does not fit in available space at 5.5 pt floor; hidden`,
               severity: "warning",
               nodeId: el.id,
             });
@@ -608,6 +602,24 @@ export function renderCard(input) {
           anchor,
           status: fit.status,
           bind: el.bind,
+          ...(el.decor ? { decor: el.decor } : {}),
+          ...(el.optional ? { optional: el.optional } : {}),
+        });
+      } else if (el.type === "path") {
+        let fill = el.fill;
+        if (fill === "$role.color") fill = roleColor;
+        else if (fill === "$theme.colors.accent") fill = accentColor;
+        else if (fill === "$theme.colors.text") fill = textColor;
+        else if (fill === "$theme.colors.background") fill = bgColor;
+        else if (fill === "$brand.palette.primary") fill = brand?.palette?.primary || "#0085FF";
+        else if (fill === "$brand.palette.secondary") fill = brand?.palette?.secondary || "#FF6B35";
+
+        scene.push({
+          type: "path",
+          id: el.id,
+          box,
+          d: el.d,
+          fill,
           ...(el.decor ? { decor: el.decor } : {}),
           ...(el.optional ? { optional: el.optional } : {}),
         });
@@ -671,6 +683,16 @@ export function renderCard(input) {
   scene = autofixResult.scene;
   issues = [...preflightIssues, ...(autofixResult.issues || [])];
   const fixes = [...localFixes, ...(autofixResult.fixes || [])];
+
+  const totalW = widthMm + 2 * bleedMm;
+  const totalH = heightMm + 2 * bleedMm;
+  const trimBox = { x: 0, y: 0, w: widthMm, h: heightMm };
+  const bleedBox = {
+    x: bleedMm === 0 ? 0 : -bleedMm,
+    y: bleedMm === 0 ? 0 : -bleedMm,
+    w: totalW,
+    h: totalH,
+  };
 
   // 9. Emit SVG strictly from the final (repaired) scene nodes
   const svgElements = scene.map((node) => {
@@ -742,7 +764,7 @@ export function renderCard(input) {
       return `<rect id="${node.id}" x="${rx}" y="${ry}" width="${rw}" height="${rh}" fill="${node.fill}"${radiusAttr}${strokeAttr}/>`;
     }
 
-    if (bleedMm > 0 && node.decor === true && node.type !== "rect") {
+    if (bleedMm > 0 && node.decor === true && node.type !== "rect" && node.type !== "path") {
       const touchesEdge =
         node.box.x <= 0.01 ||
         node.box.y <= 0.01 ||
@@ -801,27 +823,21 @@ export function renderCard(input) {
       return `<g id="${node.id}" aria-label="${ariaLabel}">${pathTag}</g>`;
     }
     if (node.type === "path") {
+      if (node.decor) {
+        const clipId = `bleed-clip-${node.id}`;
+        return `<g id="${node.id}"><clipPath id="${clipId}"><rect x="${bleedBox.x}" y="${bleedBox.y}" width="${bleedBox.w}" height="${bleedBox.h}"/></clipPath><path clip-path="url(#${clipId})" d="${node.d}" fill="${node.fill}"/></g>`;
+      }
       return `<path id="${node.id}" d="${node.d}" fill="${node.fill}"/>`;
     }
     return "";
   });
 
-  const totalW = widthMm + 2 * bleedMm;
-  const totalH = heightMm + 2 * bleedMm;
   const viewBox = bleedMm > 0
     ? `-${bleedMm} -${bleedMm} ${totalW} ${totalH}`
     : `0 0 ${widthMm} ${heightMm}`;
   const widthAttr = `${totalW}mm`;
   const heightAttr = `${totalH}mm`;
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${widthAttr}" height="${heightAttr}" viewBox="${viewBox}">${svgElements.join("")}</svg>`;
-
-  const trimBox = { x: 0, y: 0, w: widthMm, h: heightMm };
-  const bleedBox = {
-    x: bleedMm === 0 ? 0 : -bleedMm,
-    y: bleedMm === 0 ? 0 : -bleedMm,
-    w: totalW,
-    h: totalH,
-  };
 
   return { svg, scene, issues, fixes, trimBox, bleedBox, bleedMm };
 }

@@ -73,7 +73,8 @@ describe("core/schemas", () => {
     });
 
     it("rejects missing id", () => {
-      const { id: _, ...invalid } = personNormal;
+      const invalid = { ...personNormal };
+      delete invalid.id;
       expect(() => Person.parse(invalid)).toThrow();
     });
 
@@ -101,7 +102,8 @@ describe("core/schemas", () => {
     });
 
     it("rejects missing secondary logo", () => {
-      const { secondary: _, ...logos } = sampleBrandKit.logos;
+      const logos = { ...sampleBrandKit.logos };
+      delete logos.secondary;
       const invalid = { ...sampleBrandKit, logos };
       expect(() => BrandKit.parse(invalid)).toThrow();
     });
@@ -153,6 +155,18 @@ describe("core/schemas", () => {
         ],
       };
       expect(() => Block.parse(invalid)).toThrow();
+    });
+
+    it("validates PathBlockElement within BlockElement", () => {
+      const validPath = {
+        id: "motif-1",
+        type: "path",
+        box: [0, 0, 100, 100],
+        d: "M 0 0 L 10 10 Z",
+        fill: "#FF6B35",
+        decor: true,
+      };
+      expect(() => BlockElement.parse(validPath)).not.toThrow();
     });
 
     it("validates TextBlockElement with and without oneLineFloor", () => {
@@ -222,13 +236,15 @@ describe("core/schemas", () => {
     });
 
     it("rejects missing background color", () => {
-      const { background: _, ...colors } = sampleTheme.colors;
+      const colors = { ...sampleTheme.colors };
+      delete colors.background;
       const invalid = { ...sampleTheme, colors };
       expect(() => Theme.parse(invalid)).toThrow();
     });
 
     it("rejects missing heading font", () => {
-      const { heading: _, ...fonts } = sampleTheme.fonts;
+      const fonts = { ...sampleTheme.fonts };
+      delete fonts.heading;
       const invalid = { ...sampleTheme, fonts };
       expect(() => Theme.parse(invalid)).toThrow();
     });
@@ -241,7 +257,8 @@ describe("core/schemas", () => {
     });
 
     it("rejects missing skeleton attribute", () => {
-      const { skeleton: _, ...attributes } = sampleLook.attributes;
+      const attributes = { ...sampleLook.attributes };
+      delete attributes.skeleton;
       const invalid = { ...sampleLook, attributes };
       expect(() => Look.parse(invalid)).toThrow();
     });
@@ -329,7 +346,8 @@ describe("core/schemas", () => {
     });
 
     it("rejects missing lookId", () => {
-      const { lookId: _, ...invalid } = sampleDesignConfig;
+      const invalid = { ...sampleDesignConfig };
+      delete invalid.lookId;
       expect(() => DesignConfig.parse(invalid)).toThrow();
     });
   });
